@@ -96,6 +96,8 @@ database = 0
 
 `docs/plans/dev.hq-mcp.toml` in this repo is a loopback-only fixture config for the e2e tests; copy it to `~/.config/hq-mcp/config.toml` to get working `*-dev` profiles for the containers started by `bash docs/plans/fixtures.sh up`.
 
+`docs/config-guide.md` is the full guide: how to choose a file, the per-adapter key tables with defaults, the `conn_str` URL and ODBC-list forms, the read-only policy, how to register the server with a client, and a troubleshooting table.
+
 ## Install
 
 ```sh
@@ -111,7 +113,7 @@ curl -fsSL https://raw.githubusercontent.com/Snarap1/hq-mcp/main/install.sh | sh
 
 The script needs `curl` or `wget`, `tar` (`bsdtar` or `unzip` on Windows), and one of `sha256sum`, `shasum`, `openssl`; it never needs Go.
 It only installs the binary and never touches an MCP client config, so registering the server stays a separate, explicit step (see below).
-APM users can point the same script at a fork with `HQ_MCP_REPO=owner/name`.
+Set `HQ_MCP_REPO=owner/name` to install from a fork instead.
 
 Releases are cut by pushing a `v*` tag; `.github/workflows/release.yml` builds static binaries for linux, darwin, and windows (amd64, arm64, plus linux/arm), names the assets `hq-mcp_<os>_<arch>.<tar.gz|zip>` without a version, and attaches them with `checksums.txt`.
 
@@ -175,17 +177,19 @@ bash docs/plans/fixtures.sh down                     # teardown
 
 The e2e tests build the binary, write the fixture config into a temp directory, and drive it over stdio with the MCP SDK client, so no real host or credential is ever touched.
 
-## Config-authoring skill and MCP registration (APM package)
+## Configuration guide
 
-`apm/` is an [APM](https://microsoft.github.io/apm/) package that ships one skill, `hq-mcp-config`, for writing and debugging these config files.
-It carries the per-adapter key tables, the discovery and merge rules, the read-only policy, and a checker script that validates a config by driving the real binary over stdio.
-The same manifest declares the server itself under `dependencies.mcp`, so one install both teaches the agent the config format and registers the server with the harness.
+`docs/config-guide.md` is the standalone guide to writing, validating, and debugging these config files: file locations and the discovery/merge order, per-adapter key tables, `conn_str` URL and ODBC-list forms, the read-only policy, per-client registration snippets, and a troubleshooting table.
+It is self-contained, so a user can follow it by hand or hand an agent the link and let it configure hq-mcp from the repository.
+
+`scripts/hq-mcp-check.py` validates a candidate config by driving the real binary over stdio:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/Snarap1/hq-mcp/main/install.sh | sh   # the entry runs hq-mcp from PATH
-apm install Snarap1/hq-mcp/apm --target claude
+python3 scripts/hq-mcp-check.py --binary /path/to/hq-mcp --config ./hq-mcp.toml
 ```
 
-APM writes the `hq-mcp` entry into each selected harness's native MCP config and removes it again on `apm uninstall`.
-See `apm/README.md` for the package layout, the checker usage, and the offline `apm pack` bundle.
+It calls `list_profiles` and then one read probe per profile (`SELECT 1` for SQL adapters, `PING` for redis), prints `OK` or `FAIL` per check, and exits non-zero on any failure, so it drops into CI as well.
+`.claude/skills/hq-mcp-config/` is the same material as a project-scoped skill for agents working in this repository.
 
+`apm/` is an [APM](https://microsoft.github.io/apm/) package that ships no skills: it only registers the server, so `apm install Snarap1/hq-mcp/apm` writes an `hq-mcp` entry into the harness's native MCP config and `apm uninstall` removes it.
+Configuring hq-mcp is not part of it; use the guide above.

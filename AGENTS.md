@@ -32,6 +32,10 @@ Key patterns:
 - `./` — `main.go` (entrypoint) and `e2e_test.go` (gated e2e suite).
 - `internal/` — one package per domain, each with its own `_test.go`.
 - `docs/plans/` — `PLAN.md`, the full spec with execution progress log and resume instructions.
+- `docs/config-guide.md` — the standalone user-facing config guide (locations, discovery/merge, adapter keys, `conn_str` forms, read-only policy, registration, troubleshooting). Keep it in sync with behavior changes; it is the only thing external users get.
+- `scripts/hq-mcp-check.py` — validates a config by driving the real binary over stdio (`list_profiles` + one read probe per profile).
+- `.claude/skills/hq-mcp-config/` — project-scoped skill for agents in this repo; a workflow pointer into `docs/config-guide.md`, no duplicated reference material.
+- `apm/` — APM package with no skills: `apm.yml` declares only `dependencies.mcp` (stdio, `hq-mcp` from `PATH`) so `apm install` registers the server. Do not add config material back into it; the guide is the user-facing surface.
 
 ## Development Commands
 
