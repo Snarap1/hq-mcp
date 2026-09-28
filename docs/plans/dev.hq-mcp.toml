@@ -1,0 +1,64 @@
+default_profile = "pg-dev"
+
+# Development fixtures only: every host is 127.0.0.1 and every credential is a
+# throwaway value created by docs/plans/fixtures.sh.
+
+[profiles.pg-dev]
+adapter = "postgres"
+host = "127.0.0.1"
+port = 55432
+user = "hq"
+password = "hq"
+dbname = "hqdb"
+
+[profiles.my-dev]
+adapter = "mysql"
+host = "127.0.0.1"
+port = 53306
+user = "hq"
+password = "hq"
+dbname = "hqdb"
+
+[profiles.ms-dev]
+adapter = "mssql"
+host = "127.0.0.1"
+port = 51433
+user = "sa"
+password = "Hq!Passw0rd"
+dbname = "hqdb"
+
+[profiles.ms-odbc-dev]
+adapter = "odbc"
+conn_str = [
+  "Driver={ODBC Driver 18 for SQL Server};",
+  "Server=127.0.0.1,51433;",
+  "Database=hqdb;",
+  "Uid=sa;",
+  "Pwd=Hq!Passw0rd;",
+  "Encrypt=no;",
+]
+
+[profiles.ch-dev]
+adapter = "clickhouse"
+host = "127.0.0.1"
+port = 58123
+# The fixture maps the container's HTTP port 8123 to host port 58123, so the
+# port-based default (8123/8443 -> http) needs an explicit value here.
+protocol = "http"
+user = "hq"
+password = "hq"
+database = "hqdb"
+
+[profiles.ch-native-dev]
+adapter = "clickhouse"
+host = "127.0.0.1"
+port = 59000
+protocol = "native"
+user = "hq"
+password = "hq"
+database = "hqdb"
+
+[profiles.redis-dev]
+adapter = "redis"
+host = "127.0.0.1"
+port = 56379

@@ -1,0 +1,18 @@
+name: hq-mcp-config
+version: 1.0.0
+description: Skill for writing, validating, and debugging hq-mcp TOML config files (profiles, default_profile, discovery order, adapter keys, MCP registration).
+author: Snarap1
+license: MIT
+homepage: https://github.com/Snarap1/hq-mcp
+repository: https://github.com/Snarap1/hq-mcp
+
+dependencies:
+  apm: []
+  mcp:
+    - name: hq-mcp
+      registry: false
+      transport: stdio
+      command: hq-mcp
+
+includes: auto
+scripts: {}
