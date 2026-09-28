@@ -129,29 +129,81 @@ go build -o hq-mcp .
 
 ## Register with a client
 
-```sh
-claude mcp add hq-mcp -- /path/to/hq-mcp/hq-mcp
-```
+The server is a stdio process, so a client needs a command to launch and a working directory that does not contain an unrelated `hq-mcp.toml`.
+Point `command` at an absolute path: a client spawns the process directly, without a login shell, so a relative path or shell alias never resolves.
 
-With the binary on `PATH`, `hq-mcp` alone also works:
-
-```sh
-claude mcp add hq-mcp -- hq-mcp
-```
-
-Or in `.claude/settings.json`:
+Claude Code, project scope, `.mcp.json` at the repository root:
 
 ```json
 {
   "mcpServers": {
     "hq-mcp": {
-      "command": "/path/to/hq-mcp/hq-mcp"
+      "type": "stdio",
+      "command": "/abs/path/to/hq-mcp",
+      "env": {
+        "HQ_MCP_CONFIG": "/abs/path/to/hq-mcp.toml"
+      }
     }
   }
 }
 ```
 
+Or let the CLI write it:
+
+```sh
+claude mcp add hq-mcp -- /abs/path/to/hq-mcp
+```
+
+Codex, project scope, `.codex/config.toml` at the repository root.
+Codex loads a project-scoped config only for a trusted project:
+
+```toml
+[mcp_servers.hq-mcp]
+command = "/abs/path/to/hq-mcp"
+env = { HQ_MCP_CONFIG = "/abs/path/to/hq-mcp.toml" }
+```
+
+`env` is optional; drop it to use the normal discovery order.
+Codex also reads `startup_timeout_sec` and `tool_timeout_sec` on the same table when a slow database needs more than the 10s/60s defaults.
+
 Then call `list_profiles` and, for example, `run_query` with `sql` set to `SELECT 1` to confirm the wiring.
+
+## Register through APM
+
+The `apm/` package registers the server and nothing else, so `apm install` writes the harness config for you.
+Always pass `--target` explicitly.
+At project scope apm resolves the harness from directory signals and exits 2 when nothing matches, and at user scope it would install into every harness it finds, so neither guess is what you want here.
+
+Project scope, from inside the repository the server should be available in:
+
+```sh
+apm install Snarap1/hq-mcp/apm --target claude
+apm install Snarap1/hq-mcp/apm --target codex
+```
+
+User scope, available in every project on the machine, via `-g`/`--global`:
+
+```sh
+apm install -g Snarap1/hq-mcp/apm --target claude
+apm install -g Snarap1/hq-mcp/apm --target codex
+```
+
+Preview either form without writing anything with `--dry-run`.
+Remove it again with `apm uninstall`, which strips the MCP entry from the same file it was added to.
+
+Where the entry lands, and what else changes:
+
+| target | scope | MCP config written | other files |
+| --- | --- | --- | --- |
+| `claude` | project | `<repo>/.mcp.json` | `apm.yml`, `apm.lock.yaml`, `apm_modules/`, a `.gitignore` line for `apm_modules/` |
+| `claude` | user (`-g`) | `~/.claude.json` (or `$CLAUDE_CONFIG_DIR/.claude.json`) | `~/.apm/apm.yml`, `~/.apm/apm.lock.yaml`, `~/.apm/apm_modules/` |
+| `codex` | project | `<repo>/.codex/config.toml`, created mode `0600` | same as claude project scope |
+| `codex` | user (`-g`) | `~/.codex/config.toml`, or `$CODEX_HOME/config.toml` (mode `0600`) | same as claude user scope |
+
+apm creates both the harness directory and the config file when they are missing, so nothing has to exist beforehand.
+The command apm writes is bare `hq-mcp`, resolved from `PATH`, so build and link the binary before the harness starts: `go build -o ~/.local/bin/hq-mcp .`.
+To pin a config file, add `"env": {"HQ_MCP_CONFIG": "/abs/path/hq-mcp.toml"}` to the entry afterwards.
+For a local checkout, the package path works too: `apm install /path/to/hq-mcp/apm --target codex`.
 
 ## ClickHouse HTTP vs native
 

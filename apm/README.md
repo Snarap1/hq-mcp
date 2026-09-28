@@ -14,7 +14,19 @@ apm install Snarap1/hq-mcp/apm --target claude
 ```
 
 `--target` accepts any harness APM supports: `claude`, `copilot`, `cursor`, `codex`, `gemini`, `opencode`, `windsurf`, `kiro`, `grok-build`.
-Omit it to let APM auto-detect from the current project.
+Pass it explicitly: without it apm resolves the harness from the filesystem and exits rather than guessing.
+
+Project scope writes the harness config inside the current repository, user scope (`-g`/`--global`) writes the user-level config and applies to every project on the machine:
+
+```sh
+apm install Snarap1/hq-mcp/apm --target claude    # project scope, <repo>/.mcp.json
+apm install Snarap1/hq-mcp/apm --target codex     # project scope, <repo>/.codex/config.toml
+apm install -g Snarap1/hq-mcp/apm --target claude  # user scope, ~/.claude.json
+apm install -g Snarap1/hq-mcp/apm --target codex   # user scope, ~/.codex/config.toml
+```
+
+The harness directory and its config file are created if missing.
+`--dry-run` previews without writing, and `apm uninstall` strips the entry back out.
 
 The manifest declares a self-defined stdio server under `dependencies.mcp`, so `apm install` writes an `hq-mcp` entry into every selected harness's native MCP config (`.mcp.json` for Claude Code, `opencode.json` for OpenCode, and so on), and `apm uninstall` removes it again.
 

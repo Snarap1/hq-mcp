@@ -265,9 +265,36 @@ HQ_MCP_CONFIG=/abs/path/to/hq-mcp.toml claude mcp add hq-mcp -- /abs/path/to/hq-
 }
 ```
 
-Cursor uses `.cursor/mcp.json` with the same payload.
-Codex, Gemini, OpenCode, and Copilot also take a stdio server with a `command` and an `env` map; only the file name differs.
+Codex reads `~/.codex/config.toml` at user scope, and `.codex/config.toml` in a project for a trusted project.
+It uses TOML, not JSON, and a different table name:
+
+```toml
+# <repo>/.codex/config.toml  (project scope)
+[mcp_servers.hq-mcp]
+command = "/abs/path/to/hq-mcp"
+env = { HQ_MCP_CONFIG = "/abs/path/to/hq-mcp.toml" }
+```
+
+`env` is optional; drop it to use the normal discovery order.
+`startup_timeout_sec` (default 10) and `tool_timeout_sec` (default 60) sit on the same table when a slow database needs more headroom.
+
+Cursor uses `.cursor/mcp.json` with the same JSON payload as `.mcp.json`.
+Gemini, OpenCode, and Copilot also take a stdio server with a `command` and an `env` map; only the file name differs.
 Point `command` at the absolute path of the built binary: the process is spawned directly, without a login shell, so a relative path or shell alias never resolves.
+
+With [APM](https://microsoft.github.io/apm/) installed, the same registration comes from the package in this repository, which declares only the server:
+
+```sh
+apm install Snarap1/hq-mcp/apm --target claude   # project scope, writes <repo>/.mcp.json
+apm install Snarap1/hq-mcp/apm --target codex    # project scope, writes <repo>/.codex/config.toml
+apm install -g Snarap1/hq-mcp/apm --target claude   # user scope, writes ~/.claude.json
+apm install -g Snarap1/hq-mcp/apm --target codex    # user scope, writes ~/.codex/config.toml
+```
+
+`-g`/`--global` is the only way to select user scope, and `--target` should always be passed: without it apm resolves the harness from the filesystem and exits rather than guessing.
+Add `--dry-run` to preview, and `apm uninstall` to strip the entry back out.
+The written command is bare `hq-mcp` from `PATH`, so the binary has to be linked before the harness starts; add `env` to the entry afterwards to pin one config file.
+apm creates the harness directory and the config file when they are missing, so nothing has to exist beforehand.
 
 Then confirm in this order:
 
