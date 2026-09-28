@@ -65,6 +65,8 @@ jobs:
           else
             tar -czf "dist/${asset}.tar.gz" -C dist "$binary"
           fi
+          # Leave only the archive, so upload-artifact does not also ship the raw binary.
+          rm -f "dist/$binary"
 
       - uses: actions/upload-artifact@v4
         with:
