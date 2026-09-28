@@ -43,7 +43,9 @@ HQ_MCP_E2E=1 go test -run TestE2E -v .   # e2e; requires built binary, running D
 go vet ./... && gofmt -l .  # lint/format check
 ```
 
-MCP registration (user-run): `claude mcp add hq-mcp -- /path/to/hq-mcp/hq-mcp`, or a `.claude/settings.json` snippet (planned README).
+Install (user-run): `curl -fsSL https://raw.githubusercontent.com/Snarap1/hq-mcp/main/install.sh | sh` — the script only drops the binary in `$HOME/.local/bin`; releases come from `.github/workflows/release.yml` on a `v*` tag. `go install github.com/Snarap1/hq-mcp@latest` does NOT work: `go.mod` declares the bare module path `hq-mcp`.
+
+MCP registration (user-run): `claude mcp add hq-mcp -- /path/to/hq-mcp/hq-mcp`, or a `.claude/settings.json` snippet.
 
 Config the binary consumes: hq-mcp TOML candidates in priority order — `$HOME/pyproject.toml`, `$HOME/.hq-mcp.toml`, `$HOME/hq-mcp.toml`, `$XDG_CONFIG_HOME/hq-mcp/config.toml` (+ `.hq-mcp.toml`, `hq-mcp.toml`), then cwd `pyproject.toml`/`.hq-mcp.toml`/`hq-mcp.toml`; env `HQ_MCP_CONFIG` appends last (highest priority).
 

@@ -96,6 +96,25 @@ database = 0
 
 `docs/plans/dev.hq-mcp.toml` in this repo is a loopback-only fixture config for the e2e tests; copy it to `~/.config/hq-mcp/config.toml` to get working `*-dev` profiles for the containers started by `bash docs/plans/fixtures.sh up`.
 
+## Install
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Snarap1/hq-mcp/main/install.sh | sh
+```
+
+That downloads the release build for your OS and architecture, verifies its SHA-256 against the release `checksums.txt`, and installs it into `$HOME/.local/bin` as `hq-mcp` (`hq-mcp.exe` on Windows, which gets the zip asset).
+Pin a build or pick another directory with flags:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Snarap1/hq-mcp/main/install.sh | sh -s -- --version v0.1.0 --dir /usr/local/bin
+```
+
+The script needs `curl` or `wget`, `tar` (`bsdtar` or `unzip` on Windows), and one of `sha256sum`, `shasum`, `openssl`; it never needs Go.
+It only installs the binary and never touches an MCP client config, so registering the server stays a separate, explicit step (see below).
+APM users can point the same script at a fork with `HQ_MCP_REPO=owner/name`.
+
+Releases are cut by pushing a `v*` tag; `.github/workflows/release.yml` builds static binaries for linux, darwin, and windows (amd64, arm64, plus linux/arm), names the assets `hq-mcp_<os>_<arch>.<tar.gz|zip>` without a version, and attaches them with `checksums.txt`.
+
 ## Build
 
 Requires Go 1.25 (the `go.mod` directive selects it, and `GOTOOLCHAIN=auto` downloads it on first build).
@@ -110,6 +129,12 @@ go build -o hq-mcp .
 
 ```sh
 claude mcp add hq-mcp -- /path/to/hq-mcp/hq-mcp
+```
+
+With the binary on `PATH`, `hq-mcp` alone also works:
+
+```sh
+claude mcp add hq-mcp -- hq-mcp
 ```
 
 Or in `.claude/settings.json`:
@@ -157,7 +182,7 @@ It carries the per-adapter key tables, the discovery and merge rules, the read-o
 The same manifest declares the server itself under `dependencies.mcp`, so one install both teaches the agent the config format and registers the server with the harness.
 
 ```sh
-go build -o ~/.local/bin/hq-mcp .        # the entry runs hq-mcp from PATH
+curl -fsSL https://raw.githubusercontent.com/Snarap1/hq-mcp/main/install.sh | sh   # the entry runs hq-mcp from PATH
 apm install Snarap1/hq-mcp/apm --target claude
 ```
 

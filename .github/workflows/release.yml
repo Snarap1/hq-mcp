@@ -1,0 +1,98 @@
+name: release
+
+# Builds static binaries for every supported platform on a tag push and attaches
+# them to a GitHub release, so install.sh has something to download.
+# Cut a release with: git tag v0.1.0 && git push origin v0.1.0
+
+on:
+  push:
+    tags:
+      - "v*"
+
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { goos: linux, goarch: amd64 }
+          - { goos: linux, goarch: arm64 }
+          - { goos: linux, goarch: arm }
+          - { goos: darwin, goarch: amd64 }
+          - { goos: darwin, goarch: arm64 }
+          - { goos: windows, goarch: amd64 }
+          - { goos: windows, goarch: arm64 }
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          check-latest: true
+
+      - name: Test
+        if: matrix.goos == 'linux' && matrix.goarch == 'amd64'
+        run: go test ./...
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: "0"
+        run: |
+          binary=hq-mcp
+          if [ "$GOOS" = "windows" ]; then binary="$binary.exe"; fi
+          go build -trimpath -ldflags "-s -w" -o "dist/$binary" .
+
+      - name: Archive
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          binary=hq-mcp
+          if [ "$GOOS" = "windows" ]; then binary="$binary.exe"; fi
+          # The binary sits at the archive root, so install.sh extracts it by name.
+          # Asset names carry no version: install.sh then reaches the newest build
+          # through the releases/latest/download alias.
+          asset="hq-mcp_${GOOS}_${GOARCH}"
+          if [ "$GOOS" = "windows" ]; then
+            zip -q "dist/${asset}.zip" "dist/$binary"
+          else
+            tar -czf "dist/${asset}.tar.gz" -C dist "$binary"
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: hq-mcp-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/*
+          if-no-files-found: error
+
+  release:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+          cat checksums.txt
+
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --generate-notes
+          fi
+          # Clobbering keeps a re-run of the workflow idempotent.
+          gh release upload "$GITHUB_REF_NAME" dist/* --clobber
