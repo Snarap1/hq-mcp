@@ -12,6 +12,9 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"hq-mcp/internal/catalog"
+	"hq-mcp/internal/server"
 )
 
 // e2eSession is a client session against the built hq-mcp binary, configured
@@ -111,9 +114,9 @@ func textOf(res *mcp.CallToolResult) string {
 
 func TestE2EListProfiles(t *testing.T) {
 	s := startE2E(t)
-	var out listProfilesOut
+	var out server.ListProfilesOut
 	s.ok("list_profiles", map[string]any{}, &out)
-	got := map[string]ProfileInfo{}
+	got := map[string]server.ProfileInfo{}
 	for _, p := range out.Profiles {
 		got[p.Name] = p
 	}
@@ -130,7 +133,7 @@ func TestE2EListProfiles(t *testing.T) {
 func TestE2ERunQueryAdapters(t *testing.T) {
 	s := startE2E(t)
 	for _, profile := range []string{"pg-dev", "my-dev", "ms-dev", "ch-dev", "ch-native-dev", "ms-odbc-dev"} {
-		var out runQueryOut
+		var out server.RunQueryOut
 		s.ok("run_query", map[string]any{"profile": profile, "sql": "SELECT 1 AS one"}, &out)
 		if len(out.Rows) != 1 || len(out.Rows[0]) != 1 {
 			t.Fatalf("%s: rows = %+v, want [[1]]", profile, out.Rows)
@@ -147,7 +150,7 @@ func TestE2ERunQueryAdapters(t *testing.T) {
 func TestE2ERunQueryClickHouseVersion(t *testing.T) {
 	s := startE2E(t)
 	for _, profile := range []string{"ch-dev", "ch-native-dev"} {
-		var out runQueryOut
+		var out server.RunQueryOut
 		s.ok("run_query", map[string]any{"profile": profile, "sql": "SELECT version()"}, &out)
 		if len(out.Rows) != 1 {
 			t.Fatalf("%s: rows = %+v, want one row", profile, out.Rows)
@@ -160,7 +163,7 @@ func TestE2ERunQueryClickHouseVersion(t *testing.T) {
 
 func TestE2ERunQueryLimit(t *testing.T) {
 	s := startE2E(t)
-	var out runQueryOut
+	var out server.RunQueryOut
 	s.ok("run_query", map[string]any{
 		"profile": "pg-dev", "sql": "SELECT id FROM widgets ORDER BY id", "limit": 2,
 	}, &out)
@@ -187,23 +190,23 @@ func TestE2ERunQueryOnRedisProfileFails(t *testing.T) {
 
 func TestE2EGetSchemaPostgres(t *testing.T) {
 	s := startE2E(t)
-	var root SchemaOut
+	var root catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "pg-dev", "path": []string{}}, &root)
 	if len(root.Nodes) != 1 || root.Nodes[0].Name != "hqdb" || root.Nodes[0].Kind != "database" {
 		t.Fatalf("root nodes = %+v, want the hqdb database", root.Nodes)
 	}
-	var schemas SchemaOut
+	var schemas catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "pg-dev", "path": []string{"hqdb"}}, &schemas)
 	names := nodeNames(schemas.Nodes)
 	if !names["analytics"] || !names["public"] {
 		t.Errorf("schema nodes = %+v, want analytics and public", schemas.Nodes)
 	}
-	var tables SchemaOut
+	var tables catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "pg-dev", "path": []string{"hqdb", "public"}}, &tables)
 	if len(tables.Nodes) != 1 || tables.Nodes[0].Name != "widgets" || tables.Nodes[0].Kind != "table" {
 		t.Errorf("table nodes = %+v, want widgets (table)", tables.Nodes)
 	}
-	var filtered SchemaOut
+	var filtered catalog.SchemaOut
 	s.ok("get_schema", map[string]any{
 		"profile": "pg-dev", "path": []string{"hqdb", "analytics"}, "name_filter": "wid",
 	}, &filtered)
@@ -214,14 +217,14 @@ func TestE2EGetSchemaPostgres(t *testing.T) {
 
 func TestE2EGetColumns(t *testing.T) {
 	s := startE2E(t)
-	var out ColumnsOut
+	var out catalog.ColumnsOut
 	s.ok("get_columns", map[string]any{
 		"profile": "pg-dev", "path": []string{"hqdb", "public", "widgets"},
 	}, &out)
 	if out.Table != "public.widgets" {
 		t.Errorf("table = %q, want public.widgets", out.Table)
 	}
-	cols := map[string]Column{}
+	cols := map[string]catalog.Column{}
 	for _, c := range out.Columns {
 		cols[c.Name] = c
 	}
@@ -235,11 +238,11 @@ func TestE2EGetColumns(t *testing.T) {
 
 func TestE2EGetColumnsClickHouseNullability(t *testing.T) {
 	s := startE2E(t)
-	var out ColumnsOut
+	var out catalog.ColumnsOut
 	s.ok("get_columns", map[string]any{
 		"profile": "ch-dev", "path": []string{"hqdb", "widgets"},
 	}, &out)
-	cols := map[string]Column{}
+	cols := map[string]catalog.Column{}
 	for _, c := range out.Columns {
 		cols[c.Name] = c
 	}
@@ -253,11 +256,11 @@ func TestE2EGetColumnsClickHouseNullability(t *testing.T) {
 
 func TestE2EGetSchemaRedis(t *testing.T) {
 	s := startE2E(t)
-	var out SchemaOut
+	var out catalog.SchemaOut
 	s.ok("get_schema", map[string]any{
 		"profile": "redis-dev", "path": []string{}, "include_columns": true,
 	}, &out)
-	nodes := map[string]SchemaNode{}
+	nodes := map[string]catalog.SchemaNode{}
 	for _, n := range out.Nodes {
 		nodes[n.Name] = n
 	}
@@ -271,12 +274,12 @@ func TestE2EGetSchemaRedis(t *testing.T) {
 
 func TestE2EGetSchemaClickHouse(t *testing.T) {
 	s := startE2E(t)
-	var root SchemaOut
+	var root catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "ch-dev", "path": []string{}}, &root)
 	if !nodeNames(root.Nodes)["hqdb"] {
 		t.Errorf("root nodes = %+v, want hqdb", root.Nodes)
 	}
-	var tables SchemaOut
+	var tables catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "ch-dev", "path": []string{"hqdb"}}, &tables)
 	if !nodeNames(tables.Nodes)["widgets"] {
 		t.Errorf("table nodes = %+v, want widgets", tables.Nodes)
@@ -285,12 +288,12 @@ func TestE2EGetSchemaClickHouse(t *testing.T) {
 
 func TestE2EGetSchemaMySQL(t *testing.T) {
 	s := startE2E(t)
-	var root SchemaOut
+	var root catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "my-dev", "path": []string{}}, &root)
 	if !nodeNames(root.Nodes)["hqdb2"] {
 		t.Errorf("root nodes = %+v, want hqdb2", root.Nodes)
 	}
-	var tables SchemaOut
+	var tables catalog.SchemaOut
 	s.ok("get_schema", map[string]any{"profile": "my-dev", "path": []string{"hqdb"}}, &tables)
 	if !nodeNames(tables.Nodes)["widgets"] {
 		t.Errorf("table nodes = %+v, want widgets", tables.Nodes)
@@ -300,7 +303,7 @@ func TestE2EGetSchemaMySQL(t *testing.T) {
 func TestE2EExportQuery(t *testing.T) {
 	s := startE2E(t)
 	dest := filepath.Join(t.TempDir(), "out.csv")
-	var out exportQueryOut
+	var out server.ExportQueryOut
 	s.ok("export_query", map[string]any{
 		"profile": "pg-dev", "sql": "SELECT 1 AS one", "dest_path": dest,
 	}, &out)
@@ -319,7 +322,7 @@ func TestE2EExportQuery(t *testing.T) {
 func TestE2EExportQueryJSONAndNDJSON(t *testing.T) {
 	s := startE2E(t)
 	dir := t.TempDir()
-	var out exportQueryOut
+	var out server.ExportQueryOut
 	s.ok("export_query", map[string]any{
 		"profile": "pg-dev", "sql": "SELECT 1 AS one", "dest_path": filepath.Join(dir, "out.json"),
 	}, &out)
@@ -368,14 +371,14 @@ func TestE2EExportQueryRefusesWrite(t *testing.T) {
 
 func TestE2ERunRedis(t *testing.T) {
 	s := startE2E(t)
-	var got runRedisOut
+	var got server.RunRedisOut
 	s.ok("run_redis", map[string]any{
 		"profile": "redis-dev", "command": "GET user:1000",
 	}, &got)
 	if got.Result != `{"id":1000}` {
 		t.Errorf("result = %#v, want the user JSON", got.Result)
 	}
-	var scan runRedisOut
+	var scan server.RunRedisOut
 	s.ok("run_redis", map[string]any{
 		"profile": "redis-dev", "command": "SCAN", "args": []string{"0", "MATCH", "user:*", "COUNT", "100"},
 	}, &scan)
@@ -420,7 +423,7 @@ func TestE2EUnknownProfile(t *testing.T) {
 }
 
 // nodeNames indexes node names for assertions.
-func nodeNames(nodes []SchemaNode) map[string]bool {
+func nodeNames(nodes []catalog.SchemaNode) map[string]bool {
 	out := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
 		out[n.Name] = true

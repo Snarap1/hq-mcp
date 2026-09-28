@@ -1,4 +1,5 @@
-package main
+// Package readonly screens SQL statements for a read-only server.
+package readonly
 
 import (
 	"regexp"
@@ -38,19 +39,19 @@ var (
 // tripped by it.
 func stripSQL(sql string) string {
 	sql = reBlockComment.ReplaceAllString(sql, " ") // /* block comments */
-	sql = reLineComment.ReplaceAllString(sql, " ")  // -- line comments
+	sql = reLineComment.ReplaceAllString(sql, " ")  // -- line comments */
 	sql = reDollarQuote.ReplaceAllString(sql, " ")  // $$ dollar-quoted $$
 	sql = reSingleQuote.ReplaceAllString(sql, " ")  // 'single quoted'
 	sql = reDoubleQuote.ReplaceAllString(sql, " ")  // "quoted identifiers"
 	return sql
 }
 
-// readOnlyViolation returns a human-readable reason the SQL is refused, or ""
-// if it is read-only.
+// Violation returns a human-readable reason the SQL is refused, or "" if it
+// is read-only.
 //
 // Defense in depth: requires a read-only opening keyword, rejects stacked
 // statements, and rejects any data/DDL-changing keyword anywhere in the body.
-func readOnlyViolation(sql string) string {
+func Violation(sql string) string {
 	cleaned := stripSQL(sql)
 	var statements []string
 	for _, s := range strings.Split(cleaned, ";") {

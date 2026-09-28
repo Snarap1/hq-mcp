@@ -1,8 +1,8 @@
-package main
+package readonly
 
 import "testing"
 
-func TestReadOnlyViolation(t *testing.T) {
+func TestViolation(t *testing.T) {
 	cases := []struct {
 		name string
 		sql  string
@@ -32,18 +32,26 @@ func TestReadOnlyViolation(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := readOnlyViolation(tc.sql); got != tc.want {
-				t.Errorf("readOnlyViolation(%q) = %q, want %q", tc.sql, got, tc.want)
+			if got := Violation(tc.sql); got != tc.want {
+				t.Errorf("Violation(%q) = %q, want %q", tc.sql, got, tc.want)
 			}
 		})
 	}
 }
 
-func TestReadOnlyViolationSortsKeywords(t *testing.T) {
+func TestViolationSortsKeywords(t *testing.T) {
 	// Several write keywords in one statement are reported sorted and deduped.
-	got := readOnlyViolation("SELECT drop, drop, create FROM t WHERE x = truncate")
+	got := Violation("SELECT drop, drop, create FROM t WHERE x = truncate")
 	want := "statement contains write keyword(s): create, drop, truncate"
 	if got != want {
 		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestStripSQL(t *testing.T) {
+	// Literals and comments are blanked so keyword scanning sees only SQL.
+	got := stripSQL("SELECT 'drop' -- drop\n/* delete */ FROM t")
+	if want := "SELECT    \n  FROM t"; got != want {
+		t.Errorf("stripSQL = %q, want %q", got, want)
 	}
 }

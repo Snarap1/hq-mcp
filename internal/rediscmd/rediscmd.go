@@ -1,9 +1,13 @@
-package main
+// Package rediscmd runs one allowlisted read-only Redis command.
+package rediscmd
 
 import (
 	"context"
 	"fmt"
 	"strings"
+
+	"hq-mcp/internal/adapters"
+	"hq-mcp/internal/values"
 )
 
 // readOnlyRedisCommands is the default-deny allowlist for run_redis.
@@ -25,9 +29,9 @@ var readOnlyRedisCommands = map[string]bool{
 	"geopos": true, "geodist": true, "geohash": true, "geosearch": true,
 }
 
-// redisCommandViolation returns a reason the command line is refused, or "" if
+// CommandViolation returns a reason the command line is refused, or "" if
 // the leading command is on the read-only allowlist.
-func redisCommandViolation(command string) string {
+func CommandViolation(command string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return "empty command"
@@ -38,11 +42,11 @@ func redisCommandViolation(command string) string {
 	return ""
 }
 
-// runRedisCommand executes an allowlisted command with string arguments and
-// returns the JSON-safe result.
-func runRedisCommand(ctx context.Context, c *redisDB, command string, args []string) (any, error) {
+// Run executes an allowlisted command with string arguments and returns the
+// JSON-safe result.
+func Run(ctx context.Context, c *adapters.Redis, command string, args []string) (any, error) {
 	fields := strings.Fields(command)
-	if violation := redisCommandViolation(command); violation != "" {
+	if violation := CommandViolation(command); violation != "" {
 		return nil, fmt.Errorf("Refused (read-only server): %s", violation)
 	}
 	argv := make([]any, 0, len(fields)+len(args))
@@ -52,9 +56,9 @@ func runRedisCommand(ctx context.Context, c *redisDB, command string, args []str
 	for _, a := range args {
 		argv = append(argv, a)
 	}
-	res, err := c.client.Do(ctx, append([]any{strings.ToLower(fields[0])}, argv...)...).Result()
+	res, err := c.Redis().Do(ctx, append([]any{strings.ToLower(fields[0])}, argv...)...).Result()
 	if err != nil {
 		return nil, err
 	}
-	return jsonValue(res), nil
+	return values.JSON(res), nil
 }

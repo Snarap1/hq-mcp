@@ -1,4 +1,6 @@
-package main
+// Package catalog lists database objects one level at a time: relational
+// databases, schemas, and tables, or redis key namespaces.
+package catalog
 
 import (
 	"context"
@@ -8,6 +10,8 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+
+	"hq-mcp/internal/adapters"
 )
 
 // maxSchemaChars caps the marshaled get_schema payload; larger results are
@@ -65,17 +69,17 @@ var systemSchemas = map[string][]string{
 	"mssql":    {"sys", "INFORMATION_SCHEMA", "guest"},
 }
 
-// getSchema returns the children of the level addressed by path.
-func getSchema(ctx context.Context, conn DB, path []string, nameFilter string, includeColumns bool) (*SchemaOut, error) {
+// GetSchema returns the children of the level addressed by path.
+func GetSchema(ctx context.Context, conn adapters.DB, path []string, nameFilter string, includeColumns bool) (*SchemaOut, error) {
 	var (
 		nodes     []SchemaNode
 		truncated bool
 		err       error
 	)
 	switch c := conn.(type) {
-	case *redisDB:
+	case *adapters.Redis:
 		nodes, truncated, err = redisSchemaNodes(ctx, c, path, nameFilter, includeColumns)
-	case *sqlDB:
+	case *adapters.SQL:
 		nodes, err = sqlSchemaNodes(ctx, c, path, nameFilter)
 	default:
 		return nil, fmt.Errorf("get_schema is not available for %s", conn.Kind())
@@ -91,7 +95,7 @@ func getSchema(ctx context.Context, conn DB, path []string, nameFilter string, i
 }
 
 // sqlSchemaNodes dispatches the per-adapter catalog queries.
-func sqlSchemaNodes(ctx context.Context, conn *sqlDB, path []string, nameFilter string) ([]SchemaNode, error) {
+func sqlSchemaNodes(ctx context.Context, conn *adapters.SQL, path []string, nameFilter string) ([]SchemaNode, error) {
 	switch conn.Kind() {
 	case "postgres", "mysql", "mssql":
 		return relationalSchema(ctx, conn, path, nameFilter)
@@ -122,10 +126,10 @@ func rebindPlaceholders(query string, kind string) string {
 }
 
 // relationalSchema walks databases, then schemas, then tables.
-func relationalSchema(ctx context.Context, conn *sqlDB, path []string, nameFilter string) ([]SchemaNode, error) {
+func relationalSchema(ctx context.Context, conn *adapters.SQL, path []string, nameFilter string) ([]SchemaNode, error) {
 	kind := conn.Kind()
 	tables := func(schema string) ([]SchemaNode, error) {
-		rows, err := conn.db.QueryContext(ctx, rebindPlaceholders(sharedTablesQuery, kind), schema, likeFilter(nameFilter))
+		rows, err := conn.SQL().QueryContext(ctx, rebindPlaceholders(sharedTablesQuery, kind), schema, likeFilter(nameFilter))
 		if err != nil {
 			return nil, err
 		}
@@ -155,7 +159,7 @@ func relationalSchema(ctx context.Context, conn *sqlDB, path []string, nameFilte
 			q = `SELECT DB_NAME()`
 		}
 		var name string
-		if err := conn.db.QueryRowContext(ctx, q).Scan(&name); err != nil {
+		if err := conn.SQL().QueryRowContext(ctx, q).Scan(&name); err != nil {
 			return nil, err
 		}
 		return []SchemaNode{{Name: name, Kind: "database"}}, nil
@@ -173,12 +177,12 @@ func relationalSchema(ctx context.Context, conn *sqlDB, path []string, nameFilte
 }
 
 // clickhouseSchema walks databases, then tables (ClickHouse has no schemas).
-func clickhouseSchema(ctx context.Context, conn *sqlDB, path []string, nameFilter string) ([]SchemaNode, error) {
+func clickhouseSchema(ctx context.Context, conn *adapters.SQL, path []string, nameFilter string) ([]SchemaNode, error) {
 	switch len(path) {
 	case 0:
 		return scanOneColumn(ctx, conn, `SELECT name FROM system.databases ORDER BY name`, "database")
 	case 1:
-		rows, err := conn.db.QueryContext(ctx,
+		rows, err := conn.SQL().QueryContext(ctx,
 			`SELECT name, engine FROM system.tables WHERE database = ? AND positionCaseInsensitive(name, ?) > 0 ORDER BY name`,
 			path[0], nameFilter)
 		if err != nil {
@@ -193,8 +197,8 @@ func clickhouseSchema(ctx context.Context, conn *sqlDB, path []string, nameFilte
 }
 
 // scanOneColumn reads a one-column result set into nodes of the given kind.
-func scanOneColumn(ctx context.Context, conn *sqlDB, query string, kind string, args ...any) ([]SchemaNode, error) {
-	rows, err := conn.db.QueryContext(ctx, rebindPlaceholders(query, conn.Kind()), args...)
+func scanOneColumn(ctx context.Context, conn *adapters.SQL, query string, kind string, args ...any) ([]SchemaNode, error) {
+	rows, err := conn.SQL().QueryContext(ctx, rebindPlaceholders(query, conn.Kind()), args...)
 	if err != nil {
 		return nil, err
 	}
@@ -252,13 +256,13 @@ func toArgs(v []string) []any {
 	return out
 }
 
-// getColumns returns the columns of the table addressed by the trailing two
+// GetColumns returns the columns of the table addressed by the trailing two
 // path segments.
-func getColumns(ctx context.Context, conn DB, path []string) (*ColumnsOut, error) {
+func GetColumns(ctx context.Context, conn adapters.DB, path []string) (*ColumnsOut, error) {
 	if conn.Kind() == "redis" {
 		return nil, fmt.Errorf("get_columns is not available for redis; use get_schema")
 	}
-	sqlConn, ok := conn.(*sqlDB)
+	sqlConn, ok := conn.(*adapters.SQL)
 	if !ok {
 		return nil, fmt.Errorf("get_columns is not available for %s", conn.Kind())
 	}
@@ -268,7 +272,7 @@ func getColumns(ctx context.Context, conn DB, path []string) (*ColumnsOut, error
 	schema, table := path[len(path)-2], path[len(path)-1]
 	out := &ColumnsOut{Table: schema + "." + table}
 	if sqlConn.Kind() == "clickhouse" {
-		rows, err := sqlConn.db.QueryContext(ctx,
+		rows, err := sqlConn.SQL().QueryContext(ctx,
 			`SELECT name, type FROM system.columns WHERE database = ? AND table = ? ORDER BY position`,
 			schema, table)
 		if err != nil {
@@ -288,7 +292,7 @@ func getColumns(ctx context.Context, conn DB, path []string) (*ColumnsOut, error
 		}
 		return out, rows.Err()
 	}
-	rows, err := sqlConn.db.QueryContext(ctx, rebindPlaceholders(columnsQuery, sqlConn.Kind()), schema, table)
+	rows, err := sqlConn.SQL().QueryContext(ctx, rebindPlaceholders(columnsQuery, sqlConn.Kind()), schema, table)
 	if err != nil {
 		return nil, err
 	}
@@ -313,8 +317,8 @@ func columnsUsage(kind string) string {
 
 // redisSchemaNodes groups SCAN results into namespace and key nodes by the
 // segment following the path prefix.
-func redisSchemaNodes(ctx context.Context, conn *redisDB, path []string, nameFilter string, includeColumns bool) ([]SchemaNode, bool, error) {
-	sep := conn.sep
+func redisSchemaNodes(ctx context.Context, conn *adapters.Redis, path []string, nameFilter string, includeColumns bool) ([]SchemaNode, bool, error) {
+	sep := conn.Sep()
 	prefix := strings.Join(path, sep)
 	prefixWithSep := prefix
 	if len(path) > 0 {
@@ -384,7 +388,7 @@ func redisSchemaNodes(ctx context.Context, conn *redisDB, path []string, nameFil
 			if i >= redisTypeSamples {
 				break
 			}
-			typ, err := conn.client.Type(ctx, prefixWithSep+nodes[idx].Name).Result()
+			typ, err := conn.Redis().Type(ctx, prefixWithSep+nodes[idx].Name).Result()
 			if err != nil {
 				return nil, false, err
 			}
@@ -395,13 +399,13 @@ func redisSchemaNodes(ctx context.Context, conn *redisDB, path []string, nameFil
 }
 
 // redisScanKeys iterates SCAN until the cursor returns to 0 or the key cap is hit.
-func redisScanKeys(ctx context.Context, conn *redisDB, pattern string) ([]string, error) {
+func redisScanKeys(ctx context.Context, conn *adapters.Redis, pattern string) ([]string, error) {
 	var (
 		keys   []string
 		cursor uint64
 	)
 	for {
-		batch, next, err := conn.client.Scan(ctx, cursor, pattern, redisScanCount).Result()
+		batch, next, err := conn.Redis().Scan(ctx, cursor, pattern, redisScanCount).Result()
 		if err != nil {
 			return nil, err
 		}

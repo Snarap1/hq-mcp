@@ -1,4 +1,6 @@
-package main
+// Package export streams a read-only SQL query into a csv, json, or ndjson
+// file without materializing all rows.
+package export
 
 import (
 	"database/sql"
@@ -9,13 +11,16 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+
+	"hq-mcp/internal/readonly"
+	"hq-mcp/internal/sqlrows"
 )
 
-// exportFormats are the file formats export_query can write.
-var exportFormats = []string{"csv", "json", "ndjson"}
+// Formats are the file formats Query can write.
+var Formats = []string{"csv", "json", "ndjson"}
 
-// inferFormat guesses the format from the file extension.
-func inferFormat(destPath string) (string, error) {
+// InferFormat guesses the format from the file extension.
+func InferFormat(destPath string) (string, error) {
 	switch strings.ToLower(filepath.Ext(destPath)) {
 	case ".csv", ".tsv":
 		return "csv", nil
@@ -27,10 +32,9 @@ func inferFormat(destPath string) (string, error) {
 	return "", fmt.Errorf("cannot infer format from extension %q; pass format explicitly", filepath.Ext(destPath))
 }
 
-// exportQuery streams a read-only query into destPath without materializing
-// all rows. limit <= 0 means unlimited.
-func exportQuery(conn *sql.DB, sqlText, destPath, format string, limit int) (int, error) {
-	if violation := readOnlyViolation(sqlText); violation != "" {
+// Query streams a read-only query into destPath. limit <= 0 means unlimited.
+func Query(conn *sql.DB, sqlText, destPath, format string, limit int) (int, error) {
+	if violation := readonly.Violation(sqlText); violation != "" {
 		return 0, fmt.Errorf("Refused (read-only server): %s", violation)
 	}
 	dir := filepath.Dir(destPath)
@@ -60,7 +64,7 @@ func exportQuery(conn *sql.DB, sqlText, destPath, format string, limit int) (int
 	case "ndjson":
 		written, writeErr = writeNDJSON(f, rows, columns, limit)
 	default:
-		writeErr = fmt.Errorf("format must be one of %s (got %q)", strings.Join(exportFormats, ", "), format)
+		writeErr = fmt.Errorf("format must be one of %s (got %q)", strings.Join(Formats, ", "), format)
 	}
 	if cerr := f.Close(); writeErr == nil {
 		writeErr = cerr
@@ -74,7 +78,7 @@ func writeCSV(f *os.File, rows *sql.Rows, columns []string, limit int) (int, err
 	if err := w.Write(columns); err != nil {
 		return 0, err
 	}
-	n, err := streamRows(rows, columns, limit, func(row []any) error {
+	n, err := sqlrows.Stream(rows, columns, limit, func(row []any) error {
 		rec := make([]string, len(row))
 		for i, v := range row {
 			rec[i] = stringify(v)
@@ -95,14 +99,14 @@ func writeJSONRows(f *os.File, rows *sql.Rows, columns []string, limit int) (int
 	}
 	enc := json.NewEncoder(f)
 	first := true
-	n, err := streamRows(rows, columns, limit, func(row []any) error {
+	n, err := sqlrows.Stream(rows, columns, limit, func(row []any) error {
 		if !first {
 			if _, err := f.WriteString(","); err != nil {
 				return err
 			}
 		}
 		first = false
-		return enc.Encode(rowObject(columns, row))
+		return enc.Encode(sqlrows.Object(columns, row))
 	})
 	if err != nil {
 		return n, err
@@ -114,41 +118,9 @@ func writeJSONRows(f *os.File, rows *sql.Rows, columns []string, limit int) (int
 // writeNDJSON writes one row object per line.
 func writeNDJSON(f *os.File, rows *sql.Rows, columns []string, limit int) (int, error) {
 	enc := json.NewEncoder(f)
-	return streamRows(rows, columns, limit, func(row []any) error {
-		return enc.Encode(rowObject(columns, row))
+	return sqlrows.Stream(rows, columns, limit, func(row []any) error {
+		return enc.Encode(sqlrows.Object(columns, row))
 	})
-}
-
-// rowObject maps a positional row onto its column names.
-func rowObject(columns []string, row []any) map[string]any {
-	obj := make(map[string]any, len(row))
-	for i, v := range row {
-		if i < len(columns) {
-			obj[columns[i]] = v
-		}
-	}
-	return obj
-}
-
-// streamRows reads rows while writing them, stopping after limit rows when
-// limit > 0.
-func streamRows(rows *sql.Rows, columns []string, limit int, emit func([]any) error) (int, error) {
-	scan := newRowScan(len(columns))
-	n := 0
-	for rows.Next() {
-		if limit > 0 && n >= limit {
-			break
-		}
-		row, err := scan.row(rows)
-		if err != nil {
-			return n, err
-		}
-		if err := emit(row); err != nil {
-			return n, err
-		}
-		n++
-	}
-	return n, rows.Err()
 }
 
 // stringify renders a converted value for CSV output.

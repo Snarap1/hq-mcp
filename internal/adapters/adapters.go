@@ -1,4 +1,6 @@
-package main
+// Package adapters opens one fresh connection per tool call for a profile's
+// adapter: postgres, mysql, mssql, odbc (compat), clickhouse, or redis.
+package adapters
 
 import (
 	"crypto/tls"
@@ -14,6 +16,8 @@ import (
 	_ "github.com/go-sql-driver/mysql"
 	_ "github.com/jackc/pgx/v5/stdlib"
 	_ "github.com/microsoft/go-mssqldb"
+
+	"hq-mcp/internal/config"
 )
 
 // DB is an open connection to one profile. Connections are opened per tool
@@ -26,33 +30,36 @@ type DB interface {
 	Close()
 }
 
-// sqlDB is a database/sql-backed connection.
-type sqlDB struct {
+// SQL is a database/sql-backed connection.
+type SQL struct {
 	kind string
 	db   *sql.DB
 }
 
-func (c *sqlDB) Kind() string { return c.kind }
-func (c *sqlDB) Close()       { _ = c.db.Close() }
+func (c *SQL) Kind() string { return c.kind }
+func (c *SQL) Close()       { _ = c.db.Close() }
 
 // SQL exposes the underlying handle; it is only valid for SQL adapters.
-func (c *sqlDB) SQL() *sql.DB { return c.db }
+func (c *SQL) SQL() *sql.DB { return c.db }
 
-// redisDB is a go-redis connection.
-type redisDB struct {
+// Redis is a go-redis connection.
+type Redis struct {
 	client *redis.Client
 	sep    string
 }
 
-func (c *redisDB) Kind() string { return "redis" }
-func (c *redisDB) Close()       { _ = c.client.Close() }
+func (c *Redis) Kind() string { return "redis" }
+func (c *Redis) Close()       { _ = c.client.Close() }
 
 // Redis exposes the underlying client; it is only valid for redis profiles.
-func (c *redisDB) Redis() *redis.Client { return c.client }
+func (c *Redis) Redis() *redis.Client { return c.client }
 
-// openDB validates the profile and opens a fresh connection for its adapter.
-func openDB(p map[string]any) (DB, error) {
-	adapter, err := validateProfile(p)
+// Sep is the key separator configured for the redis profile.
+func (c *Redis) Sep() string { return c.sep }
+
+// Open validates the profile and opens a fresh connection for its adapter.
+func Open(p map[string]any) (DB, error) {
+	adapter, err := config.Validate(p)
 	if err != nil {
 		return nil, err
 	}
@@ -68,13 +75,13 @@ func openDB(p map[string]any) (DB, error) {
 	case "redis":
 		return openRedis(p)
 	default:
-		return nil, fmt.Errorf("adapter %q is not supported; supported: %s", adapter, supportedAdapters)
+		return nil, fmt.Errorf("adapter %q is not supported; supported: %s", adapter, config.SupportedAdapters)
 	}
 }
 
-// errNotSQL is the error for a tool that only works on SQL profiles, naming
+// ErrNotSQL is the error for a tool that only works on SQL profiles, naming
 // the redis equivalent when the profile is a redis one.
-func errNotSQL(kind, tool string) error {
+func ErrNotSQL(kind, tool string) error {
 	if kind == "redis" {
 		return fmt.Errorf("%s is not available for redis; use run_redis", tool)
 	}
@@ -84,14 +91,14 @@ func errNotSQL(kind, tool string) error {
 // hostPort returns host and port with the given defaults; an empty host
 // becomes localhost so DSNs never silently fall back to a unix socket.
 func hostPort(p map[string]any, defaultHost string, defaultPort int) (string, int, error) {
-	host, err := optStr(p, "host")
+	host, err := config.OptStr(p, "host")
 	if err != nil {
 		return "", 0, err
 	}
 	if host == "" {
 		host = defaultHost
 	}
-	port, ok, err := optInt(p, "port")
+	port, ok, err := config.OptInt(p, "port")
 	if err != nil {
 		return "", 0, err
 	}
@@ -102,7 +109,7 @@ func hostPort(p map[string]any, defaultHost string, defaultPort int) (string, in
 }
 
 func openPostgres(p map[string]any) (DB, error) {
-	p, err := fillFromURL(p, "postgres")
+	p, err := config.FillFromURL(p, "postgres")
 	if err != nil {
 		return nil, err
 	}
@@ -110,19 +117,19 @@ func openPostgres(p map[string]any) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	user, err := optStr(p, "user")
+	user, err := config.OptStr(p, "user")
 	if err != nil {
 		return nil, err
 	}
-	pass, err := optStr(p, "password")
+	pass, err := config.OptStr(p, "password")
 	if err != nil {
 		return nil, err
 	}
-	dbname, err := dbOpt(p)
+	dbname, err := config.DBOpt(p)
 	if err != nil {
 		return nil, err
 	}
-	sslmode, err := optStr(p, "sslmode")
+	sslmode, err := config.OptStr(p, "sslmode")
 	if err != nil {
 		return nil, err
 	}
@@ -135,11 +142,11 @@ func openPostgres(p map[string]any) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sqlDB{kind: "postgres", db: db}, nil
+	return &SQL{kind: "postgres", db: db}, nil
 }
 
 func openMySQL(p map[string]any) (DB, error) {
-	p, err := fillFromURL(p, "mysql")
+	p, err := config.FillFromURL(p, "mysql")
 	if err != nil {
 		return nil, err
 	}
@@ -147,19 +154,19 @@ func openMySQL(p map[string]any) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	user, err := optStr(p, "user")
+	user, err := config.OptStr(p, "user")
 	if err != nil {
 		return nil, err
 	}
-	pass, err := optStr(p, "password")
+	pass, err := config.OptStr(p, "password")
 	if err != nil {
 		return nil, err
 	}
-	dbname, err := dbOpt(p)
+	dbname, err := config.DBOpt(p)
 	if err != nil {
 		return nil, err
 	}
-	tlsOpt, err := optStr(p, "tls")
+	tlsOpt, err := config.OptStr(p, "tls")
 	if err != nil {
 		return nil, err
 	}
@@ -172,7 +179,7 @@ func openMySQL(p map[string]any) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sqlDB{kind: "mysql", db: db}, nil
+	return &SQL{kind: "mysql", db: db}, nil
 }
 
 func openMSSQL(p map[string]any, adapter string) (DB, error) {
@@ -180,7 +187,7 @@ func openMSSQL(p map[string]any, adapter string) (DB, error) {
 	var port int
 	var user, pass, dbname, encrypt string
 	if adapter == "odbc" {
-		cs, err := optConnStr(p)
+		cs, err := config.OptConnStr(p)
 		if err != nil {
 			return nil, err
 		}
@@ -193,25 +200,25 @@ func openMSSQL(p map[string]any, adapter string) (DB, error) {
 		}
 		host, port, user, pass, dbname, encrypt = opts.host, opts.port, opts.user, opts.password, opts.database, opts.encrypt
 	} else {
-		p, err := fillFromURL(p, "mssql")
+		p, err := config.FillFromURL(p, "mssql")
 		if err != nil {
 			return nil, err
 		}
 		var err2 error
-		host, port, err = hostPort(p, "localhost", 1433)
+		host, port, err2 = hostPort(p, "localhost", 1433)
 		if err2 != nil {
 			return nil, err2
 		}
-		if user, err = optStr(p, "user"); err != nil {
+		if user, err = config.OptStr(p, "user"); err != nil {
 			return nil, err
 		}
-		if pass, err = optStr(p, "password"); err != nil {
+		if pass, err = config.OptStr(p, "password"); err != nil {
 			return nil, err
 		}
-		if dbname, err = dbOpt(p); err != nil {
+		if dbname, err = config.DBOpt(p); err != nil {
 			return nil, err
 		}
-		if encrypt, err = optStr(p, "encrypt"); err != nil {
+		if encrypt, err = config.OptStr(p, "encrypt"); err != nil {
 			return nil, err
 		}
 	}
@@ -225,7 +232,7 @@ func openMSSQL(p map[string]any, adapter string) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &sqlDB{kind: adapter, db: db}, nil
+	return &SQL{kind: adapter, db: db}, nil
 }
 
 // odbcConn is the subset of an ODBC connection string hq-mcp understands.
@@ -351,7 +358,7 @@ func clickhouseProtocol(name string) (clickhouse.Protocol, error) {
 }
 
 func openClickHouse(p map[string]any) (DB, error) {
-	p, err := fillFromURL(p, "clickhouse")
+	p, err := config.FillFromURL(p, "clickhouse")
 	if err != nil {
 		return nil, err
 	}
@@ -359,29 +366,29 @@ func openClickHouse(p map[string]any) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	user, err := optStr(p, "user")
+	user, err := config.OptStr(p, "user")
 	if err != nil {
 		return nil, err
 	}
-	pass, err := optStr(p, "password")
+	pass, err := config.OptStr(p, "password")
 	if err != nil {
 		return nil, err
 	}
-	database, err := optStr(p, "database")
+	database, err := config.OptStr(p, "database")
 	if err != nil {
 		return nil, err
 	}
 	if database == "" {
-		database, err = dbOpt(p)
+		database, err = config.DBOpt(p)
 		if err != nil {
 			return nil, err
 		}
 	}
-	secure, err := optBool(p, "secure")
+	secure, err := config.OptBool(p, "secure")
 	if err != nil {
 		return nil, err
 	}
-	protocol, err := optStr(p, "protocol")
+	protocol, err := config.OptStr(p, "protocol")
 	if err != nil {
 		return nil, err
 	}
@@ -402,7 +409,7 @@ func openClickHouse(p map[string]any) (DB, error) {
 		opts.TLS = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host}
 	}
 	db := clickhouse.OpenDB(opts)
-	return &sqlDB{kind: "clickhouse", db: db}, nil
+	return &SQL{kind: "clickhouse", db: db}, nil
 }
 
 func openRedis(p map[string]any) (DB, error) {
@@ -410,23 +417,23 @@ func openRedis(p map[string]any) (DB, error) {
 	if err != nil {
 		return nil, err
 	}
-	user, err := optStr(p, "user")
+	user, err := config.OptStr(p, "user")
 	if err != nil {
 		return nil, err
 	}
-	pass, err := optStr(p, "password")
+	pass, err := config.OptStr(p, "password")
 	if err != nil {
 		return nil, err
 	}
-	dbNum, _, err := optInt(p, "database")
+	dbNum, _, err := config.OptInt(p, "database")
 	if err != nil {
 		return nil, err
 	}
-	secure, err := optBool(p, "secure")
+	secure, err := config.OptBool(p, "secure")
 	if err != nil {
 		return nil, err
 	}
-	sep, err := optStr(p, "separator")
+	sep, err := config.OptStr(p, "separator")
 	if err != nil {
 		return nil, err
 	}
@@ -442,5 +449,5 @@ func openRedis(p map[string]any) (DB, error) {
 	if secure {
 		opts.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, ServerName: host}
 	}
-	return &redisDB{client: redis.NewClient(opts), sep: sep}, nil
+	return &Redis{client: redis.NewClient(opts), sep: sep}, nil
 }

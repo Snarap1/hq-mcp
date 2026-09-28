@@ -1,4 +1,6 @@
-package main
+// Package config discovers, merges, and validates hq-mcp's own configuration
+// files, and reads options out of the raw profile tables.
+package config
 
 import (
 	"fmt"
@@ -20,9 +22,9 @@ type Config struct {
 	Profiles       map[string]map[string]any
 }
 
-// profile returns the raw profile table for name, falling back to
+// Profile returns the raw profile table for name, falling back to
 // default_profile when name is empty.
-func (c *Config) profile(name string) (map[string]any, error) {
+func (c *Config) Profile(name string) (map[string]any, error) {
 	if name == "" {
 		name = c.DefaultProfile
 		if name == "" {
@@ -99,10 +101,10 @@ func readConfigFile(path string) (map[string]any, error) {
 	return doc, nil
 }
 
-// loadConfig discovers, merges, and validates the config files. Merge is
+// Load discovers, merges, and validates the config files. Merge is
 // top-level key replacement: a profiles table from a higher-priority file
 // replaces the whole profiles map.
-func loadConfig() (*Config, error) {
+func Load() (*Config, error) {
 	paths, err := findConfigFiles()
 	if err != nil {
 		return nil, err
@@ -146,9 +148,9 @@ func loadConfig() (*Config, error) {
 	return cfg, nil
 }
 
-// supportedAdapters is every adapter this server can open, in the order used
+// SupportedAdapters is every adapter this server can open, in the order used
 // by error messages.
-const supportedAdapters = "postgres, mysql, mssql, odbc, clickhouse, redis"
+const SupportedAdapters = "postgres, mysql, mssql, odbc, clickhouse, redis"
 
 // adapterKeys lists the profile keys each adapter accepts, including aliases
 // (e.g. database is an alias of dbname for postgres/mysql/mssql).
@@ -161,22 +163,22 @@ var adapterKeys = map[string][]string{
 	"redis":      {"adapter", "database", "host", "password", "port", "secure", "separator", "user"},
 }
 
-// adapterName returns the profile's adapter, defaulting to duckdb like the
+// AdapterName returns the profile's adapter, defaulting to duckdb like the
 // reference CLI does (list_profiles shows that default).
-func adapterName(p map[string]any) string {
+func AdapterName(p map[string]any) string {
 	if s, ok := p["adapter"].(string); ok {
 		return s
 	}
 	return "duckdb"
 }
 
-// validateProfile checks the adapter is supported and every profile key is
+// Validate checks the adapter is supported and every profile key is
 // valid for that adapter, returning the adapter name.
-func validateProfile(p map[string]any) (string, error) {
-	adapter := adapterName(p)
+func Validate(p map[string]any) (string, error) {
+	adapter := AdapterName(p)
 	keys, ok := adapterKeys[adapter]
 	if !ok {
-		return "", fmt.Errorf("adapter %q is not supported; supported: %s", adapter, supportedAdapters)
+		return "", fmt.Errorf("adapter %q is not supported; supported: %s", adapter, SupportedAdapters)
 	}
 	valid := make(map[string]bool, len(keys))
 	for _, k := range keys {
@@ -191,8 +193,8 @@ func validateProfile(p map[string]any) (string, error) {
 	return adapter, nil
 }
 
-// optStr reads a string option; missing keys are "".
-func optStr(p map[string]any, key string) (string, error) {
+// OptStr reads a string option; missing keys are "".
+func OptStr(p map[string]any, key string) (string, error) {
 	v, ok := p[key]
 	if !ok || v == nil {
 		return "", nil
@@ -204,8 +206,8 @@ func optStr(p map[string]any, key string) (string, error) {
 	return s, nil
 }
 
-// optInt reads an integer option; missing keys are (0, false).
-func optInt(p map[string]any, key string) (int, bool, error) {
+// OptInt reads an integer option; missing keys are (0, false).
+func OptInt(p map[string]any, key string) (int, bool, error) {
 	v, ok := p[key]
 	if !ok || v == nil {
 		return 0, false, nil
@@ -220,8 +222,8 @@ func optInt(p map[string]any, key string) (int, bool, error) {
 	}
 }
 
-// optBool reads a boolean option; missing keys are false.
-func optBool(p map[string]any, key string) (bool, error) {
+// OptBool reads a boolean option; missing keys are false.
+func OptBool(p map[string]any, key string) (bool, error) {
 	v, ok := p[key]
 	if !ok || v == nil {
 		return false, nil
@@ -233,10 +235,10 @@ func optBool(p map[string]any, key string) (bool, error) {
 	return b, nil
 }
 
-// optConnStr reads conn_str, accepting either a plain string or a list of
+// OptConnStr reads conn_str, accepting either a plain string or a list of
 // strings (the form shared ODBC profiles use).
 // List elements are joined with a single space.
-func optConnStr(p map[string]any) (string, error) {
+func OptConnStr(p map[string]any) (string, error) {
 	v, ok := p["conn_str"]
 	if !ok || v == nil {
 		return "", nil
@@ -259,15 +261,15 @@ func optConnStr(p map[string]any) (string, error) {
 	}
 }
 
-// dbOpt reads the database name option, where database is an alias of dbname.
-func dbOpt(p map[string]any) (string, error) {
-	name, err := optStr(p, "dbname")
+// DBOpt reads the database name option, where database is an alias of dbname.
+func DBOpt(p map[string]any) (string, error) {
+	name, err := OptStr(p, "dbname")
 	if err != nil {
 		return "", err
 	}
 	if name == "" {
 		if v, ok := p["database"]; ok && v != nil {
-			name, err = optStr(p, "database")
+			name, err = OptStr(p, "database")
 			if err != nil {
 				return "", err
 			}
@@ -279,11 +281,11 @@ func dbOpt(p map[string]any) (string, error) {
 // urlSchemes are the conn_str forms parsed as URLs.
 var urlSchemes = []string{"postgres://", "mysql://", "sqlserver://", "http://", "https://", "clickhouse://"}
 
-// fillFromURL returns a copy of p with connection keys filled in from a
+// FillFromURL returns a copy of p with connection keys filled in from a
 // URL-form conn_str. Explicit keys in the profile take precedence over URL
 // parts, so URL fields only fill keys that are absent.
-func fillFromURL(p map[string]any, adapter string) (map[string]any, error) {
-	cs, err := optConnStr(p)
+func FillFromURL(p map[string]any, adapter string) (map[string]any, error) {
+	cs, err := OptConnStr(p)
 	if err != nil || cs == "" {
 		return p, err
 	}
@@ -334,8 +336,8 @@ func fillFromURL(p map[string]any, adapter string) (map[string]any, error) {
 	return q, nil
 }
 
-// sortedProfileNames returns profile names in stable order.
-func sortedProfileNames(c *Config) []string {
+// SortedProfileNames returns profile names in stable order.
+func SortedProfileNames(c *Config) []string {
 	names := make([]string, 0, len(c.Profiles))
 	for n := range c.Profiles {
 		names = append(names, n)
