@@ -119,13 +119,23 @@ tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
 printf 'hq-mcp install: downloading from %s (%s/%s)\n' "$base" "$os" "$arch"
-fetch "$base/$asset" "$tmp/$asset" || die "download failed: $base/$asset"
 fetch "$base/checksums.txt" "$tmp/checksums.txt" || die "download failed: $base/checksums.txt"
-
-want=$(sha256_of "$tmp/$asset")
 have=$(awk -v f="$asset" '$2 == f || $2 == "*" f { print $1 }' "$tmp/checksums.txt" | head -1)
 [ -n "$have" ] || die "no checksum for $asset in checksums.txt"
-[ "$want" = "$have" ] || die "checksum mismatch for $asset: got $have, downloaded $want"
+
+want=
+attempt=1
+while :; do
+	fetch "$base/$asset" "$tmp/$asset" || die "download failed: $base/$asset"
+	want=$(sha256_of "$tmp/$asset")
+	if [ "$want" = "$have" ]; then break; fi
+	# A release whose assets were re-uploaded can be served stale from the CDN
+	# for a few seconds, so one re-download is worth it before giving up.
+	if [ "$attempt" -ge 2 ]; then break; fi
+	printf 'hq-mcp install: checksum mismatch for %s, downloading again\n' "$asset" >&2
+	attempt=$((attempt + 1))
+done
+[ "$want" = "$have" ] || die "checksum mismatch for $asset: expected $have, downloaded $want"
 
 if [ "$ext" = "zip" ]; then
 	# Windows Git-Bash ships bsdtar as tar.exe and usually unzip; GNU tar cannot read zip.
