@@ -100,6 +100,10 @@ A typo such as `hostname` fails with
 | `redis` | `host`, `port`, `user`, `password`, `database`, `secure`, `separator` | host `localhost`, port `6379`, `database = 0`, `separator = ":"` |
 
 An empty postgres host becomes `localhost` rather than a unix socket.
+
+`postgres` requires no `dbname`.
+Omit it and the startup message carries no database, so the server connects to the login's default database, exactly as an mssql profile without `dbname` does.
+That is the cheap way to hold one profile per host instead of one per database: the cross-database reads then go through explicit `dbname` qualifiers in the SQL.
 The mysql `tls` value is passed to the driver as its `tls` parameter, so use the driver's registered names (`true`, `skip-verify`, `preferred`).
 `secure = true` (clickhouse, redis) turns on TLS with a minimum of TLS 1.2.
 `separator` is what `get_schema` splits redis key names on; match the instance's key convention.

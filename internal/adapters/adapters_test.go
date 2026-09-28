@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/ClickHouse/clickhouse-go/v2"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func TestParseODBC(t *testing.T) {
@@ -100,5 +101,59 @@ func TestOpenRejectsUnknownProfileKey(t *testing.T) {
 	want := `unknown option "nope" for adapter "postgres"; valid options: adapter, conn_str, database, dbname, host, password, port, sslmode, user`
 	if err.Error() != want {
 		t.Errorf("got %q, want %q", err, want)
+	}
+}
+
+// A bare `dbname=` is not a valid libpq pair: the pgx parser reads the next
+// token as the value, so the following pair is swallowed and the server is
+// asked for a database named after the next keyword. openPostgres must drop
+// empty pairs instead, leaving the login's default database in effect.
+func TestPostgresDSNOmitsEmptyPairs(t *testing.T) {
+	dsn := pgDSN(
+		pgKV("host", "10.0.0.5"),
+		pgKV("port", "5432"),
+		pgKV("user", "app"),
+		pgKV("password", ""),
+		pgKV("dbname", ""),
+		pgKV("sslmode", "prefer"),
+	)
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("pgconn.ParseConfig(%q): %v", dsn, err)
+	}
+	if cfg.Database != "" {
+		t.Errorf("Database = %q, want empty so the server picks the login default", cfg.Database)
+	}
+	if cfg.User != "app" || cfg.Host != "10.0.0.5" || cfg.Port != 5432 {
+		t.Errorf("host/port/user mangled: %s:%d %q", cfg.Host, cfg.Port, cfg.User)
+	}
+	if cfg.TLSConfig == nil {
+		t.Error("sslmode=prefer was lost")
+	}
+}
+
+// A password or user with spaces must survive the whitespace-separated
+// keyword/value format, and an explicit dbname must be carried through.
+func TestPostgresDSNQuotesSpecialValues(t *testing.T) {
+	dsn := pgDSN(
+		pgKV("host", "127.0.0.1"),
+		pgKV("port", "5432"),
+		pgKV("user", "odd user"),
+		pgKV("password", `p a\s'`),
+		pgKV("dbname", "appdb"),
+		pgKV("sslmode", "disable"),
+	)
+	cfg, err := pgconn.ParseConfig(dsn)
+	if err != nil {
+		t.Fatalf("pgconn.ParseConfig(%q): %v", dsn, err)
+	}
+	if cfg.User != "odd user" {
+		t.Errorf("User = %q, want %q", cfg.User, "odd user")
+	}
+	if cfg.Password != `p a\s'` {
+		t.Errorf("Password = %q, want %q", cfg.Password, `p a\s'`)
+	}
+	if cfg.Database != "appdb" {
+		t.Errorf("Database = %q, want %q", cfg.Database, "appdb")
 	}
 }

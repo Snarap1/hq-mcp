@@ -108,6 +108,31 @@ func hostPort(p map[string]any, defaultHost string, defaultPort int) (string, in
 	return host, port, nil
 }
 
+// pgKV renders one libpq keyword/value pair, or "" when the value is empty so
+// the caller can drop it. A value containing whitespace, a quote or a
+// backslash is single-quoted, since the keyword/value format is
+// whitespace-separated.
+func pgKV(key, value string) string {
+	if value == "" {
+		return ""
+	}
+	if strings.ContainsAny(value, " \t\n\r\v\f'\\") {
+		return key + "='" + strings.NewReplacer(`\`, `\\`, `'`, `\'`).Replace(value) + "'"
+	}
+	return key + "=" + value
+}
+
+// pgDSN joins the non-empty pairs into a libpq keyword/value connection string.
+func pgDSN(pairs ...string) string {
+	kept := pairs[:0:0]
+	for _, p := range pairs {
+		if p != "" {
+			kept = append(kept, p)
+		}
+	}
+	return strings.Join(kept, " ")
+}
+
 func openPostgres(p map[string]any) (DB, error) {
 	p, err := config.FillFromURL(p, "postgres")
 	if err != nil {
@@ -136,8 +161,20 @@ func openPostgres(p map[string]any) (DB, error) {
 	if sslmode == "" {
 		sslmode = "prefer"
 	}
-	dsn := fmt.Sprintf("host=%s port=%d user=%s password=%s dbname=%s sslmode=%s",
-		host, port, user, pass, dbname, sslmode)
+	// An empty dbname is omitted rather than written as `dbname=`: the pgx
+	// keyword/value parser reads an empty value as "the next token", so a
+	// bare `dbname=` swallows the following pair and the server then fails
+	// with `database "sslmode=prefer" does not exist`. Omitting it leaves
+	// Config.Database empty, so the startup message carries no database and
+	// the server falls back to the login's default database.
+	dsn := pgDSN(
+		pgKV("host", host),
+		pgKV("port", strconv.Itoa(port)),
+		pgKV("user", user),
+		pgKV("password", pass),
+		pgKV("dbname", dbname),
+		pgKV("sslmode", sslmode),
+	)
 	db, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
