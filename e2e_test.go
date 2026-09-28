@@ -401,8 +401,29 @@ func TestE2ERunRedis(t *testing.T) {
 	msg := s.errText("run_redis", map[string]any{
 		"profile": "redis-dev", "command": "DEL", "args": []string{"user:1000"},
 	})
-	if !strings.Contains(msg, "this server permits read-only Redis commands only") {
+	if !strings.Contains(msg, "this server permits read commands and SET only") {
 		t.Errorf("message = %q", msg)
+	}
+	// SET is the one allowed write.
+	var set server.RunRedisOut
+	s.ok("run_redis", map[string]any{
+		"profile": "redis-dev", "command": "SET", "args": []string{"hq-mcp:e2e:tmp", "v1", "EX", "60"},
+	}, &set)
+	if set.Result != "OK" {
+		t.Errorf("SET result = %#v, want OK", set.Result)
+	}
+	var back server.RunRedisOut
+	s.ok("run_redis", map[string]any{
+		"profile": "redis-dev", "command": "GET", "args": []string{"hq-mcp:e2e:tmp"},
+	}, &back)
+	if back.Result != "v1" {
+		t.Errorf("GET after SET = %#v, want v1", back.Result)
+	}
+	// Other writes stay refused even next to an allowed SET.
+	if msg := s.errText("run_redis", map[string]any{
+		"profile": "redis-dev", "command": "SETNX", "args": []string{"hq-mcp:e2e:tmp", "v2"},
+	}); !strings.Contains(msg, "this server permits read commands and SET only") {
+		t.Errorf("SETNX message = %q", msg)
 	}
 }
 

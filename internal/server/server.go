@@ -255,10 +255,10 @@ func registerTools(server *mcp.Server) {
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "run_redis",
-		Description: "Run one read-only Redis command against a redis profile. Only allowlisted " +
-			"read commands are permitted (get, mget, hgetall, smembers, scan, ttl, type, info, " +
-			"zrange, xrange, geosearch, ...); writes, blocking commands, eval, subscribe, and " +
-			"config are refused.",
+		Description: "Run one allowlisted Redis command against a redis profile. Only allowlisted " +
+			"read commands (get, mget, hgetall, smembers, scan, ttl, type, info, zrange, xrange, " +
+			"geosearch, ...) and SET (with NX/XX/EX/PX/KEEPTTL) are permitted; other writes, " +
+			"blocking commands, eval, subscribe, and config are refused.",
 	}, runRedisTool)
 
 	mcp.AddTool(server, &mcp.Tool{

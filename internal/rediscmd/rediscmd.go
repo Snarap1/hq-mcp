@@ -1,4 +1,4 @@
-// Package rediscmd runs one allowlisted read-only Redis command.
+// Package rediscmd runs one allowlisted Redis command: a read, or SET.
 package rediscmd
 
 import (
@@ -10,10 +10,11 @@ import (
 	"hq-mcp/internal/values"
 )
 
-// readOnlyRedisCommands is the default-deny allowlist for run_redis.
-// Writes, blocking commands, scripting (eval/evalsha), pubsub/monitor, and
-// config/select/flush/shutdown are deliberately absent.
-var readOnlyRedisCommands = map[string]bool{
+// redisCommands is the default-deny allowlist for run_redis: the read
+// commands plus SET (its NX/XX/EX/PX/KEEPTTL flags need no separate entry).
+// Other writes, blocking commands, scripting (eval/evalsha), pubsub/monitor,
+// and config/select/flush/shutdown are deliberately absent.
+var redisCommands = map[string]bool{
 	"ping": true, "time": true, "info": true, "dbsize": true,
 	"scan": true, "keys": true, "type": true, "exists": true, "ttl": true, "pttl": true,
 	"strlen": true, "get": true, "getrange": true, "getbit": true, "mget": true, "bitcount": true,
@@ -27,17 +28,18 @@ var readOnlyRedisCommands = map[string]bool{
 	"xlen": true, "xrange": true, "xrevrange": true, "xinfo": true,
 	"object": true, "memory": true, "randomkey": true,
 	"geopos": true, "geodist": true, "geohash": true, "geosearch": true,
+	"set": true,
 }
 
 // CommandViolation returns a reason the command line is refused, or "" if
-// the leading command is on the read-only allowlist.
+// the leading command is on the allowlist.
 func CommandViolation(command string) string {
 	fields := strings.Fields(command)
 	if len(fields) == 0 {
 		return "empty command"
 	}
-	if !readOnlyRedisCommands[strings.ToLower(fields[0])] {
-		return fmt.Sprintf("command %q is not allowed; this server permits read-only Redis commands only", fields[0])
+	if !redisCommands[strings.ToLower(fields[0])] {
+		return fmt.Sprintf("command %q is not allowed; this server permits read commands and SET only", fields[0])
 	}
 	return ""
 }

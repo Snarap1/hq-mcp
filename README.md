@@ -15,7 +15,7 @@ Connections are opened per tool call and closed afterwards, so the server can ru
 | `get_schema` | Lists database objects one level at a time; drill down with `path`. |
 | `get_columns` | Lists the columns of one table: name, type, nullability. |
 | `run_query` | Runs one read-only SQL statement and returns rows as JSON. |
-| `run_redis` | Runs one allowlisted read-only Redis command. |
+| `run_redis` | Runs one allowlisted Redis command: a read, or `SET`. |
 | `export_query` | Streams a read-only query into a `csv`, `json`, or `ndjson` file. |
 
 `profile` is optional everywhere except `get_columns`: omitting it uses `default_profile`.
@@ -34,8 +34,8 @@ The screening is defense in depth:
 One accepted consequence: `INSERT ... ON CONFLICT DO UPDATE` is refused, because `do` is a write keyword.
 The SQL is sent to the database unmodified; no `LIMIT` is injected, so use the `limit` argument to bound the response.
 
-`run_redis` is default-deny: only allowlisted read commands run (`get`, `mget`, `hgetall`, `smembers`, `scan`, `ttl`, `type`, `info`, `zrange`, `xrange`, `geosearch`, and similar).
-Writes, blocking commands, `eval`/`evalsha`, `subscribe`/`monitor`, `config`, `select`, `flush*`, and `shutdown` are refused.
+`run_redis` is default-deny: only allowlisted read commands run (`get`, `mget`, `hgetall`, `smembers`, `scan`, `ttl`, `type`, `info`, `zrange`, `xrange`, `geosearch`, and similar) plus `set` itself, with its `NX`/`XX`/`EX`/`PX`/`KEEPTTL` flags.
+Every other write (`del`, `expire`, `mset`, `setnx`, `getset`, `incr`, `hset`, `lpush`, `sadd`, ...), blocking commands, `eval`/`evalsha`, `subscribe`/`monitor`, `config`, `select`, `flush*`, and `shutdown` are refused.
 
 ## Supported adapters and profile keys
 

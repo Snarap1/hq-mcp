@@ -82,5 +82,5 @@ Redis profiles may be new: redis lives in the same TOML file as the SQL profiles
 The config is not the problem; the screening rules are.
 `run_query` and `export_query` require the statement to start with `SELECT`, `WITH`, `EXPLAIN`, `SHOW`, `DESCRIBE`, `DESC`, `TABLE`, `INSERT`, or `UPDATE`, refuse stacked statements, and refuse any write keyword that survives comment and string stripping.
 No `LIMIT` is injected, so bound the response with the `limit` argument.
-`run_redis` is default-deny; only the read-only allowlist runs.
+`run_redis` is default-deny; only the read allowlist plus `set` itself run.
 LOAD references/read-only-policy.md for the exact keyword and command lists before telling a user that a query should work.

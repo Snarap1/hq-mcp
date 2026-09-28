@@ -29,12 +29,13 @@ No `LIMIT` is injected, so bound the response with the `limit` argument; `run_qu
 
 ## Redis screening
 
-`run_redis` is default-deny: the leading word of `command` must be on the read-only allowlist, case-insensitively, or the call is refused with `command "<cmd>" is not allowed; this server permits read-only Redis commands only`.
+`run_redis` is default-deny: the leading word of `command` must be on the allowlist, case-insensitively, or the call is refused with `command "<cmd>" is not allowed; this server permits read commands and SET only`.
 An empty command is refused with `empty command`.
 
-Allowed: `ping`, `time`, `info`, `dbsize`, `scan`, `keys`, `type`, `exists`, `ttl`, `pttl`, `strlen`, `get`, `getrange`, `getbit`, `mget`, `bitcount`, `lpos`, `hget`, `hgetall`, `hkeys`, `hlen`, `hmget`, `hvals`, `hscan`, `lrange`, `lindex`, `llen`, `scard`, `smembers`, `sismember`, `smismember`, `srandmember`, `sscan`, `zcard`, `zcount`, `zlexcount`, `zrange`, `zrangebyscore`, `zrangebylex`, `zrevrange`, `zrank`, `zrevrank`, `zscore`, `zmscore`, `zscan`, `xlen`, `xrange`, `xrevrange`, `xinfo`, `object`, `memory`, `randomkey`, `geopos`, `geodist`, `geohash`, `geosearch`.
+Allowed: `ping`, `time`, `info`, `dbsize`, `scan`, `keys`, `type`, `exists`, `ttl`, `pttl`, `strlen`, `get`, `getrange`, `getbit`, `mget`, `bitcount`, `lpos`, `hget`, `hgetall`, `hkeys`, `hlen`, `hmget`, `hvals`, `hscan`, `lrange`, `lindex`, `llen`, `scard`, `smembers`, `sismember`, `smismember`, `srandmember`, `sscan`, `zcard`, `zcount`, `zlexcount`, `zrange`, `zrangebyscore`, `zrangebylex`, `zrevrange`, `zrank`, `zrevrank`, `zscore`, `zmscore`, `zscan`, `xlen`, `xrange`, `xrevrange`, `xinfo`, `object`, `memory`, `randomkey`, `geopos`, `geodist`, `geohash`, `geosearch`, `set`.
 
-Refused by omission: every write, all blocking commands, `eval` and `evalsha`, `subscribe` and `monitor`, `config`, `select`, `flush*`, and `shutdown`.
+`set` is the one allowed write, with its `NX`, `XX`, `EX`, `PX`, and `KEEPTTL` flags; nothing else that writes is allowed.
+Refused by omission: every other write (`del`, `expire`, `mset`, `setnx`, `getset`, `incr`, `hset`, `lpush`, `sadd`, ...), all blocking commands, `eval` and `evalsha`, `subscribe` and `monitor`, `config`, `select`, `flush*`, and `shutdown`.
 
 Inline arguments in `command` are split on whitespace, so quoting is not honoured: `GET "user:1000"` looks up a key that includes literal quote characters.
 Put arguments with spaces in the `args` array instead, which is passed through verbatim.
