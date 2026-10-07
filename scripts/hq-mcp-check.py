@@ -3,7 +3,7 @@
 
 Speaks MCP JSON-RPC by hand: initialize, notifications/initialized, then
 list_profiles, then one cheap read probe per profile (SELECT 1 for SQL
-adapters, PING for redis).
+adapters, PING for redis, get_schema at the root for mongodb).
 
 Usage:
     hq-mcp-check.py --binary /path/to/hq-mcp [--config PATH] [--probe NAME ...] [--timeout SECONDS]
@@ -24,6 +24,8 @@ import time
 SQL_PROBE = "SELECT 1"
 REDIS_PROBE = "PING"
 REDIS_ADAPTERS = {"redis"}
+MONGO_PROBE = "get_schema []"
+MONGO_ADAPTERS = {"mongodb"}
 
 
 class Server:
@@ -178,10 +180,16 @@ def main() -> int:
                 continue
             try:
                 if p["adapter"] in REDIS_ADAPTERS:
+                    probe = REDIS_PROBE
                     out = tool_json(server.call_tool("run_redis", {"profile": name, "command": REDIS_PROBE}))
+                elif p["adapter"] in MONGO_ADAPTERS:
+                    # run_mongo needs a collection; listing databases needs none.
+                    probe = MONGO_PROBE
+                    out = tool_json(server.call_tool("get_schema", {"profile": name, "path": []}))
                 else:
+                    probe = SQL_PROBE
                     out = tool_json(server.call_tool("run_query", {"profile": name, "sql": SQL_PROBE}))
-                print(f"OK    probe {name}: {SQL_PROBE if p['adapter'] not in REDIS_ADAPTERS else REDIS_PROBE} -> {json.dumps(out)}")
+                print(f"OK    probe {name}: {probe} -> {json.dumps(out)}")
             except Exception as exc:  # noqa: BLE001 - report, keep probing the rest
                 print(f"FAIL  probe {name}: {exc}", file=sys.stderr)
                 failures += 1

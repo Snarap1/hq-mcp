@@ -120,7 +120,7 @@ func TestE2EListProfiles(t *testing.T) {
 	for _, p := range out.Profiles {
 		got[p.Name] = p
 	}
-	for _, w := range []string{"pg-dev", "my-dev", "ms-dev", "ch-dev", "redis-dev"} {
+	for _, w := range []string{"pg-dev", "my-dev", "ms-dev", "ch-dev", "redis-dev", "mongo-dev"} {
 		if _, ok := got[w]; !ok {
 			t.Errorf("profile %q missing from %+v", w, out.Profiles)
 		}
@@ -450,4 +450,105 @@ func nodeNames(nodes []catalog.SchemaNode) map[string]bool {
 		out[n.Name] = true
 	}
 	return out
+}
+
+func TestE2ERunMongo(t *testing.T) {
+	s := startE2E(t)
+	var found server.RunMongoOut
+	s.ok("run_mongo", map[string]any{
+		"profile": "mongo-dev", "collection": "widgets",
+		"filter": `{"price": {"$gt": 1}}`, "projection": `{"name": 1}`, "sort": `{"price": -1}`,
+	}, &found)
+	if found.Count != 2 || len(found.Documents) != 2 {
+		t.Fatalf("find = %+v, want 2 documents", found)
+	}
+	if first, _ := found.Documents[0].(map[string]any); first["name"] != "nut" {
+		t.Errorf("first document = %v, want nut (sorted by price desc)", found.Documents[0])
+	}
+
+	var limited server.RunMongoOut
+	s.ok("run_mongo", map[string]any{"profile": "mongo-dev", "collection": "widgets", "limit": 2}, &limited)
+	if !limited.Truncated || limited.Count != 2 {
+		t.Errorf("find limit 2 = %+v, want 2 documents and truncated", limited)
+	}
+
+	var count server.RunMongoOut
+	s.ok("run_mongo", map[string]any{
+		"profile": "mongo-dev", "collection": "widgets", "operation": "count", "filter": `{"price": {"$lt": 2}}`,
+	}, &count)
+	if count.Count != 2 {
+		t.Errorf("count = %+v, want 2", count)
+	}
+
+	var distinct server.RunMongoOut
+	s.ok("run_mongo", map[string]any{
+		"profile": "mongo-dev", "collection": "widgets", "operation": "distinct", "field": "name",
+	}, &distinct)
+	if distinct.Count != 3 {
+		t.Errorf("distinct = %+v, want 3 names", distinct)
+	}
+
+	var agg server.RunMongoOut
+	s.ok("run_mongo", map[string]any{
+		"profile": "mongo-dev", "collection": "widgets", "operation": "aggregate",
+		"pipeline": `[{"$group": {"_id": null, "total": {"$sum": "$price"}}}]`,
+	}, &agg)
+	if len(agg.Documents) != 1 {
+		t.Fatalf("aggregate = %+v, want one document", agg)
+	}
+	if doc, _ := agg.Documents[0].(map[string]any); doc["total"] != 4.5 {
+		t.Errorf("aggregate total = %v, want 4.5", agg.Documents[0])
+	}
+
+	msg := s.errText("run_mongo", map[string]any{
+		"profile": "mongo-dev", "collection": "widgets", "operation": "aggregate",
+		"pipeline": `[{"$match": {}}, {"$out": "stolen"}]`,
+	})
+	if !strings.Contains(msg, `Refused (read-only server): aggregation stage "$out" writes data`) {
+		t.Errorf("$out refusal = %q", msg)
+	}
+}
+
+func TestE2EGetSchemaMongo(t *testing.T) {
+	s := startE2E(t)
+	var root catalog.SchemaOut
+	s.ok("get_schema", map[string]any{"profile": "mongo-dev", "path": []string{}}, &root)
+	if names := nodeNames(root.Nodes); !names["hqdb"] || names["admin"] {
+		t.Errorf("root nodes = %+v, want hqdb and no system databases", root.Nodes)
+	}
+	var colls catalog.SchemaOut
+	s.ok("get_schema", map[string]any{"profile": "mongo-dev", "path": []string{"hqdb"}}, &colls)
+	kinds := map[string]string{}
+	for _, n := range colls.Nodes {
+		kinds[n.Name] = n.Kind
+	}
+	if kinds["widgets"] != "collection" || kinds["cheap_widgets"] != "view" {
+		t.Errorf("collection nodes = %+v, want widgets collection and cheap_widgets view", colls.Nodes)
+	}
+}
+
+func TestE2EGetColumnsMongo(t *testing.T) {
+	s := startE2E(t)
+	var out catalog.ColumnsOut
+	s.ok("get_columns", map[string]any{"profile": "mongo-dev", "path": []string{"hqdb", "widgets"}}, &out)
+	cols := map[string]catalog.Column{}
+	for _, c := range out.Columns {
+		cols[c.Name] = c
+	}
+	if c := cols["name"]; c.Type != "string" || c.Nullable != "NO" {
+		t.Errorf("name column = %+v, want string, not nullable", c)
+	}
+	if c := cols["tags"]; c.Type != "array" || c.Nullable != "YES" {
+		t.Errorf("tags column = %+v, want array, nullable (missing in some documents)", c)
+	}
+}
+
+func TestE2EMongoCrossAdapter(t *testing.T) {
+	s := startE2E(t)
+	if msg := s.errText("run_query", map[string]any{"profile": "mongo-dev", "sql": "SELECT 1"}); !strings.Contains(msg, "run_query is not available for mongodb; use run_mongo") {
+		t.Errorf("run_query on mongodb = %q", msg)
+	}
+	if msg := s.errText("run_mongo", map[string]any{"profile": "pg-dev", "collection": "widgets"}); !strings.Contains(msg, "run_mongo is not available for postgres") {
+		t.Errorf("run_mongo on postgres = %q", msg)
+	}
 }

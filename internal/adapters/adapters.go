@@ -1,5 +1,5 @@
 // Package adapters opens one fresh connection per tool call for a profile's
-// adapter: postgres, mysql, mssql, odbc (compat), clickhouse, or redis.
+// adapter: postgres, mysql, mssql, odbc (compat), clickhouse, redis, or mongodb.
 package adapters
 
 import (
@@ -24,7 +24,7 @@ import (
 // call and closed afterwards, so the server can run next to a live database
 // TUI session without sharing state.
 type DB interface {
-	// Kind is the adapter name: postgres, mysql, mssql, odbc, clickhouse, or redis.
+	// Kind is the adapter name: postgres, mysql, mssql, odbc, clickhouse, redis, or mongodb.
 	Kind() string
 	// Close releases the connection.
 	Close()
@@ -74,16 +74,21 @@ func Open(p map[string]any) (DB, error) {
 		return openClickHouse(p)
 	case "redis":
 		return openRedis(p)
+	case "mongodb":
+		return openMongo(p)
 	default:
 		return nil, fmt.Errorf("adapter %q is not supported; supported: %s", adapter, config.SupportedAdapters)
 	}
 }
 
 // ErrNotSQL is the error for a tool that only works on SQL profiles, naming
-// the redis equivalent when the profile is a redis one.
+// the redis or mongodb equivalent when the profile is one of those.
 func ErrNotSQL(kind, tool string) error {
-	if kind == "redis" {
+	switch kind {
+	case "redis":
 		return fmt.Errorf("%s is not available for redis; use run_redis", tool)
+	case "mongodb":
+		return fmt.Errorf("%s is not available for mongodb; use run_mongo", tool)
 	}
 	return fmt.Errorf("%s is not available for %s", tool, kind)
 }

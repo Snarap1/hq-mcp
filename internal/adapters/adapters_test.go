@@ -157,3 +157,34 @@ func TestPostgresDSNQuotesSpecialValues(t *testing.T) {
 		t.Errorf("Database = %q, want %q", cfg.Database, "appdb")
 	}
 }
+
+func TestMongoURI(t *testing.T) {
+	cases := []struct {
+		name    string
+		profile map[string]any
+		uri, db string
+	}{
+		{"defaults", map[string]any{"adapter": "mongodb"}, "mongodb://localhost:27017", ""},
+		{"host keys", map[string]any{"host": "db1", "port": int64(27018), "database": "app"}, "mongodb://db1:27018", "app"},
+		{"conn_str db", map[string]any{"conn_str": "mongodb://u:p@a:1,b:2/app?replicaSet=rs0"}, "mongodb://u:p@a:1,b:2/app?replicaSet=rs0", "app"},
+		{"explicit db wins", map[string]any{"conn_str": "mongodb+srv://c.example.net/app", "database": "other"}, "mongodb+srv://c.example.net/app", "other"},
+	}
+	for _, c := range cases {
+		uri, db, err := mongoURI(c.profile)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if uri != c.uri || db != c.db {
+			t.Errorf("%s: got (%q, %q), want (%q, %q)", c.name, uri, db, c.uri, c.db)
+		}
+	}
+	if _, _, err := mongoURI(map[string]any{"conn_str": "postgres://x"}); err == nil {
+		t.Error("non-mongodb conn_str: want error")
+	}
+}
+
+func TestErrNotSQLMongo(t *testing.T) {
+	if got := ErrNotSQL("mongodb", "run_query").Error(); got != "run_query is not available for mongodb; use run_mongo" {
+		t.Errorf("got %q", got)
+	}
+}

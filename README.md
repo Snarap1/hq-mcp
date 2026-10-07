@@ -2,7 +2,7 @@
 
 A read-only MCP server for databases, written in Go.
 It reads hq-mcp's own TOML config files, so existing hq-mcp profiles work unchanged.
-Supported adapters: `postgres`, `mysql`, `mssql`, `odbc`, `clickhouse`, `redis`.
+Supported adapters: `postgres`, `mysql`, `mssql`, `odbc`, `clickhouse`, `redis`, `mongodb`.
 
 The server speaks MCP over stdio: stdout is the protocol channel and every diagnostic goes to stderr.
 Connections are opened per tool call and closed afterwards, so the server can run next to a live database TUI session.
@@ -16,6 +16,7 @@ Connections are opened per tool call and closed afterwards, so the server can ru
 | `get_columns` | Lists the columns of one table: name, type, nullability. |
 | `run_query` | Runs one read-only SQL statement and returns rows as JSON. |
 | `run_redis` | Runs one allowlisted Redis command: a read, or `SET`. |
+| `run_mongo` | Runs one read-only MongoDB operation: `find`, `aggregate`, `count`, or `distinct`. |
 | `export_query` | Streams a read-only query into a `csv`, `json`, or `ndjson` file. |
 
 `profile` is optional everywhere except `get_columns`: omitting it uses `default_profile`.
@@ -37,6 +38,8 @@ The SQL is sent to the database unmodified; no `LIMIT` is injected, so use the `
 `run_redis` is default-deny: only allowlisted read commands run (`get`, `mget`, `hgetall`, `smembers`, `scan`, `ttl`, `type`, `info`, `zrange`, `xrange`, `geosearch`, and similar) plus `set` itself, with its `NX`/`XX`/`EX`/`PX`/`KEEPTTL` flags.
 Every other write (`del`, `expire`, `mset`, `setnx`, `getset`, `incr`, `hset`, `lpush`, `sadd`, ...), blocking commands, `eval`/`evalsha`, `subscribe`/`monitor`, `config`, `select`, `flush*`, and `shutdown` are refused.
 
+`run_mongo` only exposes `find`, `aggregate`, `count`, and `distinct`, and refuses the writing aggregation stages `$out` and `$merge` anywhere in a pipeline, sub-pipelines included.
+
 ## Supported adapters and profile keys
 
 | adapter | keys |
@@ -47,6 +50,7 @@ Every other write (`del`, `expire`, `mset`, `setnx`, `getset`, `incr`, `hset`, `
 | `odbc` | `conn_str` (ODBC string, or a list of strings) |
 | `clickhouse` | `host`, `port` (default 8123), `user`, `password`, `database`, `protocol` (`http` or `native`), `secure`, `conn_str` |
 | `redis` | `host` (default `localhost`), `port` (default 6379), `user`, `password`, `database`, `secure`, `separator` (default `:`) |
+| `mongodb` | `host` (default `localhost`), `port` (default 27017), `user`, `password`, `database`, `auth_source`, `secure`, `conn_str` (`mongodb://` or `mongodb+srv://`) |
 
 An unknown key is rejected with the list of valid options for that adapter.
 `conn_str` accepts a URL form (`postgres://`, `mysql://`, `sqlserver://`, `http://`, `https://`, `clickhouse://`); explicit profile keys win over the URL parts.
@@ -218,11 +222,18 @@ Redis profiles live in the same TOML file as the SQL ones, which a SQL-only TUI 
 `separator` (default `:`) is what `get_schema` splits key names on.
 At the root, `get_schema` groups keys into `namespace` nodes (segment) and `key` nodes (a key with no further segment), with the key count in `count`; pass `include_columns` to sample the Redis type of up to 25 keys.
 
+## MongoDB profiles
+
+`get_schema` lists databases at the root (hiding `admin`, `config`, `local`), then the collections and views of `[database]`.
+`get_columns` infers top-level fields from a sample of 100 documents, since a collection has no fixed schema.
+`run_mongo` takes `filter`, `projection`, `sort`, and `pipeline` as MongoDB Extended JSON strings and returns documents as relaxed Extended JSON.
+A user created as the container root lives in `admin`, so set `auth_source = "admin"` for it.
+
 ## Tests
 
 ```sh
 go test ./...                                        # unit tests, no network
-bash docs/plans/fixtures.sh up                       # five Docker fixtures on 127.0.0.1
+bash docs/plans/fixtures.sh up                       # six Docker fixtures on 127.0.0.1
 HQ_MCP_E2E=1 go test -run TestE2E -v .               # e2e against those fixtures
 bash docs/plans/fixtures.sh down                     # teardown
 ```
@@ -240,7 +251,7 @@ It is self-contained, so a user can follow it by hand or hand an agent the link 
 python3 scripts/hq-mcp-check.py --binary /path/to/hq-mcp --config ./hq-mcp.toml
 ```
 
-It calls `list_profiles` and then one read probe per profile (`SELECT 1` for SQL adapters, `PING` for redis), prints `OK` or `FAIL` per check, and exits non-zero on any failure, so it drops into CI as well.
+It calls `list_profiles` and then one read probe per profile (`SELECT 1` for SQL adapters, `PING` for redis, root `get_schema` for mongodb), prints `OK` or `FAIL` per check, and exits non-zero on any failure, so it drops into CI as well.
 `.claude/skills/hq-mcp-config/` is the same material as a project-scoped skill for agents working in this repository.
 
 `apm/` is an [APM](https://microsoft.github.io/apm/) package that ships no skills: it only registers the server, so `apm install Snarap1/hq-mcp/apm` writes an `hq-mcp` entry into the harness's native MCP config and `apm uninstall` removes it.

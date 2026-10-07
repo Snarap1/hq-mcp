@@ -150,7 +150,7 @@ func Load() (*Config, error) {
 
 // SupportedAdapters is every adapter this server can open, in the order used
 // by error messages.
-const SupportedAdapters = "postgres, mysql, mssql, odbc, clickhouse, redis"
+const SupportedAdapters = "postgres, mysql, mssql, odbc, clickhouse, redis, mongodb"
 
 // adapterKeys lists the profile keys each adapter accepts, including aliases
 // (e.g. database is an alias of dbname for postgres/mysql/mssql).
@@ -161,6 +161,7 @@ var adapterKeys = map[string][]string{
 	"odbc":       {"adapter", "conn_str"},
 	"clickhouse": {"adapter", "conn_str", "database", "host", "password", "port", "protocol", "secure", "user"},
 	"redis":      {"adapter", "database", "host", "password", "port", "secure", "separator", "user"},
+	"mongodb":    {"adapter", "auth_source", "conn_str", "database", "host", "password", "port", "secure", "user"},
 }
 
 // AdapterName returns the profile's adapter, defaulting to duckdb like the
