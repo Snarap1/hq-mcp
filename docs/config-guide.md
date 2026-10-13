@@ -67,7 +67,7 @@ Profile names are TOML table names, so a name with a dot or a space must be quot
 Prefer plain lowercase-with-dashes names.
 
 Every profile needs `adapter`.
-Valid values: `postgres`, `mysql`, `mssql`, `odbc`, `clickhouse`, `redis`.
+Valid values: `postgres`, `mysql`, `mssql`, `odbc`, `clickhouse`, `redis`, `mongodb`.
 A profile with no `adapter` reads as `duckdb` and fails to open; there is no duckdb adapter.
 
 `default_profile` is optional.
@@ -79,7 +79,7 @@ Without it, every call without an explicit `profile` argument returns
 Copy the `[profiles.*]` tables into a new `hq-mcp.toml`.
 Do not rename the file: hq-mcp never reads another tool's config, so a profile the user edits there will not reach the server.
 Drop foreign-only keys, in particular a top-level `keymaps` table, because they are rejected rather than ignored.
-Redis profiles may be new: redis lives in the same TOML file as the SQL profiles, and that tradeoff is deliberate to keep one config.
+Redis and MongoDB profiles may be new: they live in the same TOML file as the SQL profiles, and that tradeoff is deliberate to keep one config.
 
 ## 3. Adapter keys
 
@@ -98,6 +98,7 @@ A typo such as `hostname` fails with
 | `odbc` | `conn_str` only | required, no default |
 | `clickhouse` | `host`, `port`, `user`, `password`, `database` (`dbname` fallback), `protocol`, `secure`, `conn_str` | host `localhost`, port `8123` |
 | `redis` | `host`, `port`, `user`, `password`, `database`, `secure`, `separator` | host `localhost`, port `6379`, `database = 0`, `separator = ":"` |
+| `mongodb` | `host`, `port`, `user`, `password`, `database`, `auth_source`, `secure`, `conn_str` | host `localhost`, port `27017`, no default database |
 
 An empty postgres host becomes `localhost` rather than a unix socket.
 
@@ -105,8 +106,14 @@ An empty postgres host becomes `localhost` rather than a unix socket.
 Omit it and the startup message carries no database, so the server connects to the login's default database, exactly as an mssql profile without `dbname` does.
 That is the cheap way to hold one profile per host instead of one per database, but it is not a way to query the other databases from it: PostgreSQL has no cross-database query, and the server answers `cross-database references are not implemented` for a qualified name. Reaching a second database needs `postgres_fdw`/`dblink` set up inside that server, or a second profile.
 The mysql `tls` value is passed to the driver as its `tls` parameter, so use the driver's registered names (`true`, `skip-verify`, `preferred`).
-`secure = true` (clickhouse, redis) turns on TLS with a minimum of TLS 1.2.
+`secure = true` (clickhouse, redis, mongodb) turns on TLS with a minimum of TLS 1.2.
 `separator` is what `get_schema` splits redis key names on; match the instance's key convention.
+
+A mongodb `conn_str` must start with `mongodb://` or `mongodb+srv://` and is handed to the driver as-is, so replica sets, SRV records, and URI options all work; its path names the default database when `database` is absent.
+Without `conn_str`, `host` and `port` build a single-host URI.
+Explicit `user`/`password` win over credentials in the URI, keeping the URI's auth mechanism.
+`auth_source` is the database the user is defined in; a user created through `MONGO_INITDB_ROOT_USERNAME` lives in `admin`, so set `auth_source = "admin"` for it, or authentication fails.
+`database` is only a default: `run_mongo` takes a `database` argument per call, and `get_schema` lists every non-system database the user can see.
 
 ### Examples
 
@@ -151,6 +158,19 @@ host = "127.0.0.1"
 port = 6379
 database = 0
 separator = ":"
+
+[profiles.local-mongo]
+adapter = "mongodb"
+host = "127.0.0.1"
+port = 27017
+user = "app"
+password = "app"
+auth_source = "admin"
+database = "appdb"
+
+[profiles.atlas]
+adapter = "mongodb"
+conn_str = "mongodb+srv://app:secret@cluster0.example.mongodb.net/appdb?retryWrites=true"
 ```
 
 `docs/plans/dev.hq-mcp.toml` in this repo is a loopback-only fixture config for the e2e tests; copy it to `~/.config/hq-mcp/config.toml` for working `*-dev` profiles against the containers started by `bash docs/plans/fixtures.sh up`.
@@ -203,7 +223,7 @@ Set `protocol = "http"` explicitly whenever a container or tunnel maps some othe
 
 ## 5. Validate against the real binary
 
-`scripts/hq-mcp-check.py` in this repository drives the server over stdio: it calls `list_profiles`, then one cheap read probe per profile (`SELECT 1` for SQL adapters, `PING` for redis).
+`scripts/hq-mcp-check.py` in this repository drives the server over stdio: it calls `list_profiles`, then one cheap read probe per profile (`SELECT 1` for SQL adapters, `PING` for redis, `get_schema` at the root for mongodb, which lists databases and needs no collection).
 
 ```sh
 python3 scripts/hq-mcp-check.py --binary /path/to/hq-mcp --config ./hq-mcp.toml
@@ -305,6 +325,7 @@ Then confirm in this order:
 1. `list_profiles` with no arguments; expect every profile with its adapter and the default flagged. An empty list means the config was not found at all.
 2. `run_query` with `sql` set to `SELECT 1` on the default profile; expect one row. A refusal here is the read-only policy, a connection error is a config issue.
 3. For redis, `run_redis` with `command` set to `PING`.
+4. For mongodb, `get_schema` with an empty `path`; expect the databases. An empty list with no error usually means the user has no rights on any non-system database.
 
 ## 7. When a config is right but queries fail
 
@@ -335,7 +356,15 @@ Refused by omission: every other write (`del`, `expire`, `mset`, `setnx`, `getse
 Inline arguments in `command` are split on whitespace, so quoting is not honoured: `GET "user:1000"` looks up a key that includes literal quote characters.
 Put arguments with spaces in the `args` array, which is passed through verbatim.
 
-Cross-adapter guardrails: `run_query`/`export_query` on a redis profile return `<tool> is not available for redis; use run_redis`; `run_redis` on a SQL profile returns `run_redis is not available for <adapter>`; `get_columns` on a redis profile returns `get_columns is not available for redis; use get_schema`.
+`run_mongo` runs exactly one of four operations, so nothing else reaches the server: `find` (with `filter`, `projection`, `sort`), `aggregate` (with `pipeline`), `count` (with `filter`), and `distinct` (with `field` and `filter`).
+Any other `operation` is refused with `operation "<op>" is not supported; supported: find, aggregate, count, distinct`.
+`filter`, `projection`, `sort`, and `pipeline` are MongoDB Extended JSON strings, so `{"$oid": "..."}` and `{"$date": "..."}` reach the server as real ObjectIDs and dates, and the key order of `sort` is kept.
+The aggregation stages `$out` and `$merge` are refused wherever they appear, including inside `$facet`, `$lookup`, and `$unionWith` sub-pipelines, with `Refused (read-only server): aggregation stage "$out" writes data; this server permits reads only`.
+`limit` defaults to 50 documents; `truncated` says more were available.
+Results come back as relaxed Extended JSON: ObjectIDs as `{"$oid": ...}`, dates as `{"$date": ...}`, plain numbers as numbers.
+`get_columns` on a collection infers top-level fields from a sample of 100 documents; `type` joins every BSON type seen with `|`, and a field missing or null in any sampled document is nullable.
+
+Cross-adapter guardrails: `run_query`/`export_query` on a redis profile return `<tool> is not available for redis; use run_redis`, and on a mongodb profile `<tool> is not available for mongodb; use run_mongo`; `run_redis`/`run_mongo` on another adapter return `<tool> is not available for <adapter>`; `get_columns` on a redis profile returns `get_columns is not available for redis; use get_schema`.
 
 ## Troubleshooting
 
@@ -349,3 +378,6 @@ Cross-adapter guardrails: `run_query`/`export_query` on a redis profile return `
 | `list_profiles` is empty | the client launched the server from an unexpected working directory, or no candidate file has profiles |
 | `no profile specified and no default_profile is set` | no `default_profile`, and the call passed no `profile` |
 | `statement contains write keyword(s): ...` | the read-only policy, not the config |
+| mongodb `authentication failed` with the right password | `auth_source` is missing; a root user lives in `admin` |
+| `no database given and the profile has no database` | a mongodb profile without `database`; pass `database` to `run_mongo` or set one |
+| mongodb `server selection error ... context deadline exceeded` | the host is unreachable within 10s, or `secure`/TLS does not match the server |

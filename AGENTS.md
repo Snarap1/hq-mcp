@@ -3,21 +3,21 @@
 ## Project Overview
 
 `hq-mcp` is a Go MCP server for read-only database access, replacing an earlier Python implementation.
-It supports adapters: `postgres`, `mysql`, `mssql`, `odbc` (compat), `clickhouse`, `redis`.
+It supports adapters: `postgres`, `mysql`, `mssql`, `odbc` (compat), `clickhouse`, `redis`, `mongodb`.
 It reads its own TOML config files (`hq-mcp.toml`, `.hq-mcp.toml`, `$XDG_CONFIG_HOME/hq-mcp/config.toml`, `[tool.hq-mcp]` in `pyproject.toml`); no other tool's config files are read.
 **`docs/plans/PLAN.md` is the authoritative spec** — the project is mid-build; this document describes both implemented and planned behavior, and the plan is the source of truth for anything not yet written.
 
 ## Architecture & Data Flow
 
 One domain package per concern under `internal/`; `main.go` at the root is only the stdio entrypoint.
-`internal/config` (discovery, merge, profile validation, option accessors), `internal/adapters` (`DB`, openers, ODBC/URL `conn_str`), `internal/readonly` (SQL screening), `internal/values` (JSON-safe conversion), `internal/sqlrows` (scan buffer, streaming), `internal/query` (`run_query`), `internal/export` (`export_query`), `internal/catalog` (`get_schema`/`get_columns`), `internal/rediscmd` (`run_redis`), `internal/server` (MCP tools).
-Dependency direction: `config` ← `adapters` ← {`catalog`, `rediscmd`, `server`}, `readonly`/`values`/`sqlrows` ← {`query`, `export`, `rediscmd`}; nothing imports `server` except `main`.
+`internal/config` (discovery, merge, profile validation, option accessors), `internal/adapters` (`DB`, openers, ODBC/URL `conn_str`), `internal/readonly` (SQL screening), `internal/values` (JSON-safe conversion), `internal/sqlrows` (scan buffer, streaming), `internal/query` (`run_query`), `internal/export` (`export_query`), `internal/catalog` (`get_schema`/`get_columns`), `internal/rediscmd` (`run_redis`), `internal/mongocmd` (`run_mongo`), `internal/server` (MCP tools).
+Dependency direction: `config` ← `adapters` ← {`catalog`, `rediscmd`, `mongocmd`, `server`}, `readonly`/`values`/`sqlrows` ← {`query`, `export`, `rediscmd`}; nothing imports `server` except `main`.
 
 Data flow per tool call:
 
 1. Load config via hq-mcp discovery (`config.Load`) → pick profile (explicit name, else `default_profile`).
 2. Open a **fresh connection per request, close after** (`adapters.Open`; parity with the Python server; lets the server run alongside a live database TUI session). No pooling across calls.
-3. Screen the statement: SQL via `readonly.Violation`; Redis via the read-only command whitelist in `rediscmd` (default-deny).
+3. Screen the statement: SQL via `readonly.Violation`; Redis via the read-only command whitelist in `rediscmd` (default-deny); MongoDB via the four-operation surface and `$out`/`$merge` pipeline rejection in `mongocmd`.
 4. Execute, convert driver values to JSON-safe values (`values.JSON`), return typed Out struct.
 
 Key patterns:
@@ -71,8 +71,8 @@ Config the binary consumes: hq-mcp TOML candidates in priority order — `$HOME/
 - `internal/config` — config discovery, merge, per-adapter key validation, URL/ODBC conn_str handling. Done.
 - `internal/adapters` — `DB` interface, `SQL`/`Redis` connection types, openers, ODBC parser, ClickHouse HTTP-on-8123 default. Done.
 - `internal/readonly` — `stripSQL` + `Violation` SQL screening. Done, parity-locked; port verbatim, do not "fix".
-- `internal/server` — the six tools (`list_profiles`, `get_schema`, `get_columns`, `run_query`, `run_redis`, `export_query`) and their In/Out structs. Done.
-- `go.mod` — module `hq-mcp`, `go 1.25.0`; deps: `modelcontextprotocol/go-sdk v1.8.0`, `pelletier/go-toml/v2`, `jackc/pgx/v5`, `go-sql-driver/mysql`, `microsoft/go-mssqldb`, `ClickHouse/clickhouse-go/v2`, `redis/go-redis/v9`.
+- `internal/server` — the seven tools (`list_profiles`, `get_schema`, `get_columns`, `run_query`, `run_redis`, `run_mongo`, `export_query`) and their In/Out structs. Done.
+- `go.mod` — module `hq-mcp`, `go 1.25.0`; deps: `modelcontextprotocol/go-sdk v1.8.0`, `pelletier/go-toml/v2`, `jackc/pgx/v5`, `go-sql-driver/mysql`, `microsoft/go-mssqldb`, `ClickHouse/clickhouse-go/v2`, `redis/go-redis/v9`, `go.mongodb.org/mongo-driver/v2`.
 - `docs/plans/PLAN.md` — spec, verification checklist, execution progress log (update it when completing steps).
 
 ## Runtime/Tooling Preferences
@@ -86,5 +86,5 @@ Config the binary consumes: hq-mcp TOML candidates in priority order — `$HOME/
 
 - Unit tests live next to the package they cover (`internal/<pkg>/<pkg>_test.go`); the e2e suite is the only test in the root `main` package.
 - Unit tests: behavioral, table-driven, no network — assert screening decisions (`SELECT 1` allowed, `DELETE FROM t` refused, strings/comments stripped), ODBC/URL parsing against the real `ms-alpha`/`ch-alpha` profile shapes, value conversion.
-- E2E gated behind `HQ_MCP_E2E=1` (skip otherwise): spawns the built binary via `mcp.Client` + `CommandTransport`, cwd = temp dir with an `hq-mcp.toml` (from `docs/plans/dev.hq-mcp.toml`); asserts against real `pg-eps`, `ch-alpha`, and the docker redis fixture.
+- E2E gated behind `HQ_MCP_E2E=1` (skip otherwise): spawns the built binary via `mcp.Client` + `CommandTransport`, cwd = temp dir with an `hq-mcp.toml` (from `docs/plans/dev.hq-mcp.toml`); asserts against real `pg-eps`, `ch-alpha`, and the docker redis and mongo fixtures.
 - Every behavior change to screening/refusal messages needs a matching table-driven case; refusal message wording is part of the contract.

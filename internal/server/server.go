@@ -11,6 +11,7 @@ import (
 	"hq-mcp/internal/catalog"
 	"hq-mcp/internal/config"
 	"hq-mcp/internal/export"
+	"hq-mcp/internal/mongocmd"
 	"hq-mcp/internal/query"
 	"hq-mcp/internal/rediscmd"
 )
@@ -185,6 +186,62 @@ func runRedisTool(ctx context.Context, req *mcp.CallToolRequest, in runRedisIn) 
 	return nil, RunRedisOut{Command: strings.TrimSpace(in.Command), Result: result}, nil
 }
 
+type runMongoIn struct {
+	Profile    string `json:"profile,omitempty" jsonschema:"profile name; omit to use default_profile"`
+	Database   string `json:"database,omitempty" jsonschema:"database name; omit to use the profile's database"`
+	Collection string `json:"collection" jsonschema:"collection (or view) name"`
+	Operation  string `json:"operation,omitempty" jsonschema:"find, aggregate, count, or distinct (default find)"`
+	Filter     string `json:"filter,omitempty" jsonschema:"query filter as a MongoDB Extended JSON object, e.g. {\"status\": \"active\", \"_id\": {\"$oid\": \"...\"}}"`
+	Projection string `json:"projection,omitempty" jsonschema:"find projection as a JSON object, e.g. {\"name\": 1}"`
+	Sort       string `json:"sort,omitempty" jsonschema:"find sort as a JSON object, e.g. {\"created_at\": -1}"`
+	Pipeline   string `json:"pipeline,omitempty" jsonschema:"aggregate pipeline as a JSON array of stages; $out and $merge are refused"`
+	Field      string `json:"field,omitempty" jsonschema:"field name for distinct"`
+	Limit      int    `json:"limit,omitempty" jsonschema:"maximum documents to return; 0 means unlimited (default 50)"`
+}
+
+// RunMongoOut is the run_mongo response.
+type RunMongoOut struct {
+	Operation string `json:"operation"`
+	Documents []any  `json:"documents"`
+	Count     int64  `json:"count"`
+	Truncated bool   `json:"truncated"`
+}
+
+func runMongoTool(ctx context.Context, req *mcp.CallToolRequest, in runMongoIn) (*mcp.CallToolResult, RunMongoOut, error) {
+	conn, closeConn, err := openProfile(in.Profile)
+	if err != nil {
+		return nil, RunMongoOut{}, err
+	}
+	defer closeConn()
+	mongoConn, ok := conn.(*adapters.Mongo)
+	if !ok {
+		return nil, RunMongoOut{}, adapters.ErrNotSQL(conn.Kind(), "run_mongo")
+	}
+	op := strings.ToLower(strings.TrimSpace(in.Operation))
+	if op == "" {
+		op = "find"
+	}
+	limit := in.Limit
+	if limit == 0 {
+		limit = 50
+	}
+	res, err := mongocmd.Run(ctx, mongoConn, mongocmd.Request{
+		Database:   in.Database,
+		Collection: in.Collection,
+		Operation:  op,
+		Filter:     in.Filter,
+		Projection: in.Projection,
+		Sort:       in.Sort,
+		Pipeline:   in.Pipeline,
+		Field:      in.Field,
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, RunMongoOut{}, err
+	}
+	return nil, RunMongoOut{Operation: op, Documents: res.Documents, Count: res.Count, Truncated: res.Truncated}, nil
+}
+
 type exportQueryIn struct {
 	Profile  string `json:"profile,omitempty" jsonschema:"profile name; omit to use default_profile"`
 	SQL      string `json:"sql" jsonschema:"one read-only SQL statement"`
@@ -235,13 +292,13 @@ func registerTools(server *mcp.Server) {
 		Name: "get_schema",
 		Description: "List database objects one level at a time. Start with an empty path for the " +
 			"databases, then drill down: [\"hqdb\"] lists schemas (postgres, mysql, mssql) or tables " +
-			"(clickhouse), and [\"hqdb\",\"public\"] lists tables. On redis, keys are grouped by the " +
+			"(clickhouse) or collections (mongodb), and [\"hqdb\",\"public\"] lists tables. On redis, keys are grouped by the " +
 			"segment after the path prefix, reported as namespace or key nodes.",
 	}, getSchemaTool)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name:        "get_columns",
-		Description: "List the columns of one table: name, type, and nullability. The path's last two segments address the table, e.g. [\"hqdb\",\"public\",\"widgets\"] on postgres, [\"hqdb\",\"widgets\"] on clickhouse.",
+		Description: "List the columns of one table: name, type, and nullability. The path's last two segments address the table, e.g. [\"hqdb\",\"public\",\"widgets\"] on postgres, [\"hqdb\",\"widgets\"] on clickhouse. On mongodb, fields are inferred from a sample of documents.",
 	}, getColumnsTool)
 
 	mcp.AddTool(server, &mcp.Tool{
@@ -260,6 +317,14 @@ func registerTools(server *mcp.Server) {
 			"geosearch, ...) and SET (with NX/XX/EX/PX/KEEPTTL) are permitted; other writes, " +
 			"blocking commands, eval, subscribe, and config are refused.",
 	}, runRedisTool)
+
+	mcp.AddTool(server, &mcp.Tool{
+		Name: "run_mongo",
+		Description: "Run one read-only MongoDB operation against a mongodb profile: find (filter, " +
+			"projection, sort), aggregate (pipeline), count (filter), or distinct (field, filter). " +
+			"Filters and pipelines are MongoDB Extended JSON strings, so {\"$oid\": ...} and " +
+			"{\"$date\": ...} work. Aggregation stages that write ($out, $merge) are refused.",
+	}, runMongoTool)
 
 	mcp.AddTool(server, &mcp.Tool{
 		Name: "export_query",

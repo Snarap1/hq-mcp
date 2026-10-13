@@ -83,7 +83,7 @@ func TestValidateUnsupportedAdapter(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected an error for the duckdb adapter")
 	}
-	want := `adapter "duckdb" is not supported; supported: postgres, mysql, mssql, odbc, clickhouse, redis`
+	want := `adapter "duckdb" is not supported; supported: postgres, mysql, mssql, odbc, clickhouse, redis, mongodb`
 	if err.Error() != want {
 		t.Errorf("got %q, want %q", err, want)
 	}

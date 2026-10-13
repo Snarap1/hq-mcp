@@ -81,6 +81,8 @@ func GetSchema(ctx context.Context, conn adapters.DB, path []string, nameFilter 
 		nodes, truncated, err = redisSchemaNodes(ctx, c, path, nameFilter, includeColumns)
 	case *adapters.SQL:
 		nodes, err = sqlSchemaNodes(ctx, c, path, nameFilter)
+	case *adapters.Mongo:
+		nodes, err = mongoSchemaNodes(ctx, c, path, nameFilter)
 	default:
 		return nil, fmt.Errorf("get_schema is not available for %s", conn.Kind())
 	}
@@ -261,6 +263,12 @@ func toArgs(v []string) []any {
 func GetColumns(ctx context.Context, conn adapters.DB, path []string) (*ColumnsOut, error) {
 	if conn.Kind() == "redis" {
 		return nil, fmt.Errorf("get_columns is not available for redis; use get_schema")
+	}
+	if mongoConn, ok := conn.(*adapters.Mongo); ok {
+		if len(path) < 2 {
+			return nil, fmt.Errorf("path needs at least 2 segments, e.g. %s", columnsUsage("mongodb"))
+		}
+		return mongoColumns(ctx, mongoConn, path[len(path)-2], path[len(path)-1])
 	}
 	sqlConn, ok := conn.(*adapters.SQL)
 	if !ok {

@@ -13,6 +13,7 @@ MY_NAME=hq-my-dev
 MS_NAME=hq-ms-dev
 CH_NAME=hq-ch-dev
 REDIS_NAME=hq-redis-dev
+MONGO_NAME=hq-mongo-dev
 
 PG_PORT=55432
 MY_PORT=53306
@@ -20,6 +21,7 @@ MS_PORT=51433
 CH_HTTP_PORT=58123
 CH_NATIVE_PORT=59000
 REDIS_PORT=56379
+MONGO_PORT=57017
 
 log() { printf '%s fixtures: %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
@@ -39,7 +41,7 @@ wait_for() {
 }
 
 remove_all() {
-  docker rm -f "$PG_NAME" "$MY_NAME" "$MS_NAME" "$CH_NAME" "$REDIS_NAME" >/dev/null 2>&1 || true
+  docker rm -f "$PG_NAME" "$MY_NAME" "$MS_NAME" "$CH_NAME" "$REDIS_NAME" "$MONGO_NAME" >/dev/null 2>&1 || true
 }
 
 up() {
@@ -75,6 +77,12 @@ up() {
   docker run -d --name "$REDIS_NAME" -p "127.0.0.1:$REDIS_PORT:6379" redis:7-alpine >/dev/null
   wait_for "$REDIS_NAME" 30 docker exec "$REDIS_NAME" redis-cli ping
 
+  log "starting mongodb on 127.0.0.1:$MONGO_PORT"
+  docker run -d --name "$MONGO_NAME" \
+    -e MONGO_INITDB_ROOT_USERNAME=hq -e MONGO_INITDB_ROOT_PASSWORD=hq \
+    -p "127.0.0.1:$MONGO_PORT:27017" mongo:7 >/dev/null
+  wait_for "$MONGO_NAME" 60 docker exec "$MONGO_NAME" mongosh --quiet -u hq -p hq --eval 'db.runCommand({ping: 1})'
+
   log "seeding data"
   docker exec -i "$PG_NAME" psql -U hq -d hqdb -v ON_ERROR_STOP=1 -q <<'SQL'
 CREATE TABLE public.widgets(id serial primary key, name text, price numeric);
@@ -109,6 +117,14 @@ SQL
   docker exec "$REDIS_NAME" redis-cli SADD 'user:1000:roles' admin viewer
   docker exec "$REDIS_NAME" redis-cli SET plainkey 1
   docker exec "$REDIS_NAME" redis-cli LPUSH 'queue:a' a b c
+  docker exec "$MONGO_NAME" mongosh --quiet -u hq -p hq --authenticationDatabase admin hqdb --eval '
+    db.widgets.insertMany([
+      {_id: 1, name: "bolt", price: 1.5, tags: ["metal"]},
+      {_id: 2, name: "nut", price: 2.5},
+      {_id: 3, name: "screw", price: 0.5, note: null},
+    ]);
+    db.createView("cheap_widgets", "widgets", [{$match: {price: {$lt: 2}}}]);
+  ' >/dev/null
 
   log "fixtures are up"
 }

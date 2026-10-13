@@ -62,3 +62,12 @@ database = "hqdb"
 adapter = "redis"
 host = "127.0.0.1"
 port = 56379
+
+[profiles.mongo-dev]
+adapter = "mongodb"
+host = "127.0.0.1"
+port = 57017
+user = "hq"
+password = "hq"
+auth_source = "admin"
+database = "hqdb"
